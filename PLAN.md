@@ -111,8 +111,22 @@ sonucunun `inspect.isawaitable` olup olmadığına çalışma zamanında
 bakarak — event loop içinde çalıştırıyor), `toy_pipeline.py`'deki TÜM
 ezkl çağrıları (`gen_settings`, `calibrate_settings`, `compile_circuit`,
 `setup`, `gen_witness`, `prove`, `verify`, `create_evm_verifier`,
-`encode_evm_calldata`) bunun üzerinden geçiyor. EVM/deploy adımları
-(6-8) hâlâ Colab'da doğrulanmadı — bir sonraki koşum turu bekleniyor.)
+`encode_evm_calldata`) bunun üzerinden geçiyor.
+
+**2. tur:** `generate_solidity_verifier` artık geçiyor (0.847s). Yeni
+hata `compile_verifier_solidity`de — ezkl'nin ürettiği Verifier.sol
+yoğun assembly içerdiğinden varsayılan solc ayarlarıyla "Stack too
+deep" hatası verdi. Düzeltildi: `chain/solc.py` (yeni, Faz D'nin
+`RoundManager.sol` derlemesinde de kullanılacak) — `solc --standard-json`
+ile `viaIR=true`, `optimizer.enabled=true`/`runs=200`,
+`evmVersion="shanghai"` ayarlarıyla derliyor; hata mesajlarını
+(`formattedMessage`) okunabilir basıyor (sadece returncode'a bakmıyor);
+`timeout=300s` ile aşırı uzayan derlemeyi net hatayla durduruyor;
+deployed (runtime) bytecode boyutunu EIP-170'in 24576 byte sınırına
+karşı kontrol edip aşarsa uyarı basıyor ve raporda `exceeds_eip170`
+olarak taşıyor. Saf ayrıştırma mantığı (`_parse_standard_json_output`)
+sentetik solc çıktılarıyla test edildi. EVM/deploy adımları (7-8) hâlâ
+Colab'da doğrulanmadı — bir sonraki koşum turu bekleniyor.)
 
 (Artık "yerel" değil "Colab" fazı — bkz. yukarıdaki "Ortam politikası"
 notu.) Küçük MLP (32->32->8) -> ONNX -> ezkl derleme+kalibrasyon ->

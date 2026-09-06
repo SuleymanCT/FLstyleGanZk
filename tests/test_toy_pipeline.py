@@ -34,10 +34,13 @@ def test_toy_pipeline_end_to_end():
         print("\n=== Faz B raporu ===")
         for step, elapsed in report["steps"].items():
             print(f"  {step:<28} {elapsed:>8.3f}s")
+        print(f"  {'deployed_bytecode_size':<28} {report['deployed_bytecode_size']}")
+        print(f"  {'exceeds_eip170':<28} {report['exceeds_eip170']}")
         print(f"  {'contract_address':<28} {report['contract_address']}")
         print(f"  {'deploy_gas':<28} {report['deploy_gas']}")
         print(f"  {'verify_gas':<28} {report['verify_gas']}")
 
+        assert report["exceeds_eip170"] is False
         assert report["verified"] is True
         assert report["deploy_gas"] > 0
         assert report["verify_gas"] > 0

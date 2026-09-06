@@ -22,7 +22,6 @@ olur). `tests/test_toy_pipeline.py` bu yüzden modülü import etmeden önce
 from __future__ import annotations
 
 import json
-import subprocess
 import time
 from pathlib import Path
 
@@ -31,6 +30,7 @@ import torch
 
 from chain.anvil import AnvilProcess
 from chain.client import Web3Client
+from chain.solc import compile_solidity
 from circuits.ezkl_utils import run_async, run_get_srs
 
 INPUT_VISIBILITY = "private"
@@ -135,29 +135,13 @@ def generate_solidity_verifier(paths: dict, work_dir: Path) -> tuple[Path, Path]
     return sol_path, abi_path
 
 
-def compile_verifier_solidity(sol_path: Path) -> bytes:
-    result = subprocess.run(
-        ["solc", "--combined-json", "bin", str(sol_path)],
-        capture_output=True,
-        text=True,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"solc başarısız (returncode={result.returncode}):\nstdout={result.stdout}\nstderr={result.stderr}"
-        )
-
-    data = json.loads(result.stdout)
-    contracts = data.get("contracts", {})
-    if not contracts:
-        raise RuntimeError(f"solc çıktısında 'contracts' boş: {result.stdout[:2000]}")
-
-    # Birden fazla kontrat olabilir (kütüphane/yardımcı kontratlar); en
-    # büyük bytecode'a sahip olanı ana Verifier kontratı kabul ediyoruz.
-    key, contract = max(contracts.items(), key=lambda kv: len(kv[1].get("bin", "")))
-    bin_hex = contract.get("bin", "")
-    if not bin_hex:
-        raise RuntimeError(f"'{key}' için derlenmiş bytecode boş.")
-    return bytes.fromhex(bin_hex)
+def compile_verifier_solidity(sol_path: Path) -> dict:
+    """ezkl'nin ürettiği Verifier.sol yoğun assembly içerir; varsayılan
+    solc ayarları "Stack too deep" ile başarısız olur (Faz B'nin 2.
+    Colab koşumunda görüldü) — bu yüzden `chain.solc.compile_solidity`
+    `viaIR=True` + optimizer ile standard-JSON üzerinden derler.
+    """
+    return compile_solidity(sol_path, via_ir=True, optimizer_runs=200, evm_version="shanghai")
 
 
 def deploy_and_verify_onchain(bytecode: bytes, proof_path: Path, work_dir: Path, anvil: AnvilProcess) -> dict:
@@ -225,8 +209,18 @@ def run_full_pipeline(work_dir: Path, anvil: AnvilProcess) -> dict:
         raise RuntimeError("[adım: ezkl_verify_offchain] ezkl.verify False döndürdü — zincir dışı doğrulama başarısız.")
 
     sol_path, _abi_path = _run_step(report, "generate_solidity_verifier", generate_solidity_verifier, ezkl_paths, work_dir)
-    bytecode = _run_step(report, "compile_verifier_solidity", compile_verifier_solidity, sol_path)
-    onchain = _run_step(report, "deploy_and_verify_onchain", deploy_and_verify_onchain, bytecode, proof_path, work_dir, anvil)
+    compiled = _run_step(report, "compile_verifier_solidity", compile_verifier_solidity, sol_path)
+    report["deployed_bytecode_size"] = compiled["deployed_bytecode_size"]
+    report["exceeds_eip170"] = compiled["exceeds_eip170"]
+    if compiled["exceeds_eip170"]:
+        print(
+            "[toy_pipeline] UYARI: verifier'ın deployed bytecode'u EIP-170 sınırını aşıyor, "
+            "deploy adımı başarısız olacaktır."
+        )
+
+    onchain = _run_step(
+        report, "deploy_and_verify_onchain", deploy_and_verify_onchain, compiled["bytecode"], proof_path, work_dir, anvil
+    )
 
     report.update(onchain)
     return report
