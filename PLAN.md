@@ -6,6 +6,12 @@ tamamlandığında güncellenir.
 ## Faz A (Colab) — Envanter ve çıkarma
 
 **durum: yapılmadı**
+(kod yazıldı — bkz. `scripts/inventory.py`, `scripts/extract_shards.py`,
+`scripts/audit_fedavg.py`, `fl/module_tree.py`, `fl/shard_utils.py`,
+`fl/fedavg_utils.py`, `fl/inventory_utils.py`, `fl/stylegan_xl_env.py`;
+saf mantık birim testleriyle doğrulandı, ama gerçek Drive verisi
+üzerinde Colab'da HENÜZ koşulmadı — kabul kriteri ancak o koşumdan
+sonra karşılanabilir.)
 
 Girdi yapısı:
 ```

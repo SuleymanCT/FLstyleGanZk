@@ -13,6 +13,9 @@ local:
   zk_root: "./data/zk"
   shards_dir: "./data/zk/shards"
   results_dir: "./zk_artifacts_results"
+  # autonomousvision/stylegan-xl'in yerel klonu (dnnlib/torch_utils/legacy.py
+  # için). Yerelde StyleGAN pickle açılmayacağı için genelde kullanılmaz.
+  stylegan_xl_repo: "./stylegan-xl"
 
 colab:
   # Drive'daki SALT OKUNUR deney kökü. Hiçbir kod buraya yazmaz/silmez.
@@ -20,3 +23,5 @@ colab:
   zk_root: "/content/drive/MyDrive/FL_Experiments/zk"
   shards_dir: "/content/drive/MyDrive/FL_Experiments/zk/shards"
   results_dir: "/content/zk-fl-stylegan-retina/zk_artifacts_results"
+  # autonomousvision/stylegan-xl'in Colab'a klonlanacağı yer.
+  stylegan_xl_repo: "/content/stylegan-xl"

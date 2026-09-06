@@ -7,7 +7,6 @@ sırasıyla dict'e konmuş olursa olsun, aynı hash'i üretmeli.
 
 import hashlib
 
-import numpy as np
 import torch
 
 
