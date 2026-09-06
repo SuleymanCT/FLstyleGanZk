@@ -3,6 +3,19 @@
 Altı fazın tanımı ve kabul kriterleri. Her fazın durumu, o faz
 tamamlandığında güncellenir.
 
+## Ortak altyapı: pathguard
+
+`storage/pathguard.py` (`assert_writable`, `open_readonly`) tüm
+fazları bağlar: Drive'daki korumalı köklere (`Generative_Image`,
+`FL_Experiments`, `parallel_final`, `StyleGANTrain`) yazma artık kod
+seviyesinde engellenir. **Bundan sonra dosya yazan HER yeni script**
+(Faz C'nin ONNX/devre çıktıları, Faz D'nin kontrat/orkestratör
+çıktıları, Faz E'nin replay sonuçları, Faz F'nin saldırı/canlı koşu
+çıktıları dahil) her yazma çağrısından önce `assert_writable` çağırmak
+ZORUNDA — bkz. `CLAUDE.md` madde 9. Faz A'daki üç script
+(`scripts/inventory.py`, `extract_shards.py`, `audit_fedavg.py`) buna
+göre retrofit edildi.
+
 ## Faz A (Colab) — Envanter ve çıkarma
 
 **durum: yapılmadı**
@@ -11,7 +24,10 @@ tamamlandığında güncellenir.
 `fl/fedavg_utils.py`, `fl/inventory_utils.py`, `fl/stylegan_xl_env.py`;
 saf mantık birim testleriyle doğrulandı, ama gerçek Drive verisi
 üzerinde Colab'da HENÜZ koşulmadı — kabul kriteri ancak o koşumdan
-sonra karşılanabilir.)
+sonra karşılanabilir. Üç script artık her yazmadan önce
+`storage.pathguard.assert_writable` çağırıyor, pkl/fedavg okumaları
+`storage.pathguard.open_readonly` ile yapılıyor — bkz. "Ortak altyapı"
+notu yukarıda.)
 
 Girdi yapısı:
 ```

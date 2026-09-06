@@ -10,13 +10,13 @@ PATHS_YAML = os.path.join(REPO_ROOT, "configs", "paths.yaml")
 
 def test_local_block_has_expected_keys():
     paths = load_paths(env="local", config_path=PATHS_YAML)
-    for key in ("raw_root", "zk_root", "shards_dir", "results_dir", "stylegan_xl_repo"):
+    for key in ("raw_root", "zk_root", "shards_dir", "results_dir", "stylegan_xl_repo", "stylegan_train_root"):
         assert key in paths, f"local bloğunda '{key}' eksik"
 
 
 def test_colab_block_has_expected_keys():
     paths = load_paths(env="colab", config_path=PATHS_YAML)
-    for key in ("raw_root", "zk_root", "shards_dir", "results_dir", "stylegan_xl_repo"):
+    for key in ("raw_root", "zk_root", "shards_dir", "results_dir", "stylegan_xl_repo", "stylegan_train_root"):
         assert key in paths, f"colab bloğunda '{key}' eksik"
 
 

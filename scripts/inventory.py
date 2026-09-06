@@ -23,6 +23,7 @@ from configs.loader import load_paths
 from fl.inventory_utils import classify_pkl_paths, compare_training_options, parse_stats_jsonl
 from fl.module_tree import describe_module_tree, detect_candidate_submodules, extract_known_attrs
 from fl.stylegan_xl_env import load_network_pkl
+from storage.pathguard import assert_writable
 
 EXPECTED_ROUNDS = 15  # round_0..round_14
 EXPECTED_SITES = 4  # site_0..site_3
@@ -276,8 +277,10 @@ def main(argv=None) -> int:
     else:
         inventory["full_scan"] = run_full_inventory(structure, stylegan_xl_repo)
 
+    assert_writable(results_dir)
     os.makedirs(results_dir, exist_ok=True)
     out_path = os.path.join(results_dir, "inventory.json")
+    assert_writable(out_path)
     with open(out_path, "w", encoding="utf-8") as f:
         json.dump(inventory, f, indent=2, default=str, ensure_ascii=False)
     print(f"\n[inventory] Yazıldı: {out_path}")

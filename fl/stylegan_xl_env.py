@@ -13,6 +13,8 @@ from __future__ import annotations
 import os
 import sys
 
+from storage.pathguard import open_readonly
+
 
 def ensure_stylegan_xl_on_path(repo_path: str) -> None:
     print(f"[stylegan_xl_env] StyleGAN-XL repo kontrol ediliyor: {repo_path}")
@@ -69,7 +71,7 @@ def load_network_pkl(pkl_path: str, repo_path: str) -> dict:
     import legacy  # StyleGAN-XL reposundan, ensure_stylegan_xl_on_path sonrası import edilebilir.
 
     print(f"[stylegan_xl_env] Yükleniyor: {pkl_path}")
-    with open(pkl_path, "rb") as f:
+    with open_readonly(pkl_path) as f:
         data = legacy.load_network_pkl(f)
 
     print(f"[stylegan_xl_env] Yüklendi. Anahtarlar: {sorted(data.keys())}")

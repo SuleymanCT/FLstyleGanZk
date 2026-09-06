@@ -25,6 +25,7 @@ from configs.loader import load_paths
 from fl.fedavg_utils import RunningAverage, compare_state_dicts, compute_norm_percentiles
 from fl.stylegan_xl_env import load_network_pkl
 from scripts.inventory import EXPECTED_SITES, scan_structure
+from storage.pathguard import assert_writable, open_readonly
 
 
 def parse_args(argv=None):
@@ -64,7 +65,8 @@ def load_full_state_dict(pkl_path: str, stylegan_xl_repo: str) -> dict:
 
 
 def load_fedavg_file(path: str) -> dict:
-    raw = torch.load(path, map_location="cpu")
+    with open_readonly(path) as f:
+        raw = torch.load(f, map_location="cpu")
     return {k: v.detach().cpu().to(torch.float32) for k, v in raw.items()}
 
 
@@ -161,6 +163,7 @@ def main(argv=None) -> int:
         print(f"[audit_fedavg] fedavg dosyaları: {structure['fedavg_files']}")
         return 0
 
+    assert_writable(results_dir)
     os.makedirs(results_dir, exist_ok=True)
 
     per_round_results = []
@@ -171,6 +174,7 @@ def main(argv=None) -> int:
         all_deltas.extend(deltas)
 
     fedavg_audit_path = os.path.join(results_dir, "fedavg_audit.json")
+    assert_writable(fedavg_audit_path)
     with open(fedavg_audit_path, "w", encoding="utf-8") as f:
         json.dump(
             {"complete_rounds": complete_rounds, "incomplete_rounds": incomplete_rounds, "per_round": per_round_results},
@@ -189,6 +193,7 @@ def main(argv=None) -> int:
 
     percentiles = compute_norm_percentiles(all_deltas)
     delta_norms_path = os.path.join(results_dir, "delta_norms.json")
+    assert_writable(delta_norms_path)
     with open(delta_norms_path, "w", encoding="utf-8") as f:
         json.dump({"deltas": all_deltas, "percentiles": percentiles}, f, indent=2, ensure_ascii=False)
     print(f"[audit_fedavg] Yazıldı: {delta_norms_path} (p50={percentiles['p50']:.4f}, p90={percentiles['p90']:.4f}, p99={percentiles['p99']:.4f})")

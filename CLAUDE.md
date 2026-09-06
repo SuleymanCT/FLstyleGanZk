@@ -4,9 +4,11 @@ Bu dosya, bu repoda çalışırken uyulması gereken sabit kuralları listeler.
 
 ## Kurallar
 
-1. **Drive'daki `FL_Experiments/parallel_final` SALT OKUNURDUR.** Hiçbir
-   kod oraya yazmaz, hiçbir kod oradan bir şey silmez. Sadece okuma
-   (`legacy.load_network_pkl` vb.) yapılır.
+1. **Drive'daki korumalı köklerin hepsi SALT OKUNURDUR:**
+   `Generative_Image`, `FL_Experiments`, `parallel_final`, `StyleGANTrain`
+   (tam liste: `storage/pathguard.py: PROTECTED_MARKERS`). Bu köklerin
+   altındaki hiçbir yola hiçbir kod yazmaz, hiçbir şey silmez. Sadece
+   okuma (`legacy.load_network_pkl`, `torch.load` vb.) yapılır.
 
 2. **Base model yeniden eğitilmez. 15 round yeniden eğitilmez.** Mevcut
    deney tamamlanmış ve eğitilmiş kabul edilir; bu repo sadece onun
@@ -39,3 +41,12 @@ Bu dosya, bu repoda çalışırken uyulması gereken sabit kuralları listeler.
    bırakılmaz; bir değişiklik mevcut bir testi bozuyorsa, ya değişiklik
    düzeltilir ya da test bilinçli olarak güncellenir (sessizce
    atlanmaz).
+
+9. **Yazan HER script, her dosya yazma çağrısından hemen önce
+   `storage.pathguard.assert_writable(path)` çağırır.** `torch.save`,
+   `open(path, "w")`, `os.makedirs`, `shutil.*` — hepsinden önce. Madde
+   1'deki kural artık sadece dokümantasyona değil, buna dayanır:
+   korumalı bir yola yazma girişimi programatik olarak `RuntimeError`
+   ile durmalı. Korumalı köklerden okurken de (`network-snapshot.pkl`,
+   `fedavg_*.pt` gibi büyük ikili dosyalar) `storage.pathguard.open_readonly`
+   kullanılır.

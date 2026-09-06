@@ -24,6 +24,7 @@ import torch
 from configs.loader import load_paths
 from fl.shard_utils import build_shard_meta, extract_prefixed_state_dict
 from fl.stylegan_xl_env import load_network_pkl
+from storage.pathguard import assert_writable
 
 
 def parse_args(argv=None):
@@ -98,10 +99,13 @@ def load_progress(progress_path: str) -> dict:
 
 
 def save_progress(progress_path: str, progress: dict) -> None:
+    assert_writable(progress_path)
     os.makedirs(os.path.dirname(progress_path), exist_ok=True)
     tmp_path = progress_path + ".tmp"
+    assert_writable(tmp_path)
     with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(progress, f, indent=2, ensure_ascii=False)
+    assert_writable(progress_path)
     os.replace(tmp_path, progress_path)
 
 
@@ -134,6 +138,7 @@ def main(argv=None) -> int:
             print(f"  {key}: {status}{note}")
         return 0
 
+    assert_writable(shards_dir)
     os.makedirs(shards_dir, exist_ok=True)
 
     for site in site_entries:
@@ -156,8 +161,10 @@ def main(argv=None) -> int:
         print(f"[extract_shards] {key}: {len(shard)} tensör, prefixler: {prefixes}")
 
         round_dir = os.path.join(shards_dir, f"round_{site['round']}")
+        assert_writable(round_dir)
         os.makedirs(round_dir, exist_ok=True)
         shard_path = os.path.join(round_dir, f"site_{site['site']}.pt")
+        assert_writable(shard_path)
         torch.save(shard, shard_path)
 
         meta = build_shard_meta(
@@ -171,6 +178,7 @@ def main(argv=None) -> int:
             },
         )
         meta_path = os.path.join(round_dir, f"site_{site['site']}_meta.json")
+        assert_writable(meta_path)
         with open(meta_path, "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2, default=str, ensure_ascii=False)
 

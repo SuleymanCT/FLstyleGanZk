@@ -9,7 +9,10 @@ local:
   # bağlantısı varsa buraya işaret et; yoksa Faz A çıktıları
   # (shard'lar, inventory.json) zaten zk_root altında olacağından bu
   # yerelde çoğu zaman kullanılmaz.
-  raw_root: "./data/raw"
+  raw_root: "./data/raw"  # SALT OKUNUR (bkz. storage/pathguard.py)
+  # StyleGANTrain kökünün yerel karşılığı — yerelde kullanılmaz, sadece
+  # colab bloğuyla şema simetrisi için placeholder.
+  stylegan_train_root: "./data/stylegan_train"  # SALT OKUNUR
   zk_root: "./data/zk"
   shards_dir: "./data/zk/shards"
   results_dir: "./zk_artifacts_results"
@@ -18,10 +21,13 @@ local:
   stylegan_xl_repo: "./stylegan-xl"
 
 colab:
-  # Drive'daki SALT OKUNUR deney kökü. Hiçbir kod buraya yazmaz/silmez.
-  raw_root: "/content/drive/MyDrive/FL_Experiments/parallel_final"
-  zk_root: "/content/drive/MyDrive/FL_Experiments/zk"
-  shards_dir: "/content/drive/MyDrive/FL_Experiments/zk/shards"
-  results_dir: "/content/zk-fl-stylegan-retina/zk_artifacts_results"
+  # Drive'daki SALT OKUNUR deney kökü. Hiçbir kod buraya yazmaz/silmez
+  # (storage/pathguard.py: assert_writable bunu kod seviyesinde zorlar).
+  raw_root: "/content/drive/MyDrive/<TAM_YOL>/FL_Experiments/parallel_final"  # SALT OKUNUR
+  # StyleGAN eğitim kökü — bu da SALT OKUNUR, sadece okuma için kullanılır.
+  stylegan_train_root: "/content/drive/MyDrive/<TAM_YOL>/StyleGANTrain"  # SALT OKUNUR
+  zk_root: "/content/drive/MyDrive/ZK_FL_Artifacts"
+  shards_dir: "/content/drive/MyDrive/ZK_FL_Artifacts/shards"
+  results_dir: "zk_artifacts_results"
   # autonomousvision/stylegan-xl'in Colab'a klonlanacağı yer.
   stylegan_xl_repo: "/content/stylegan-xl"
