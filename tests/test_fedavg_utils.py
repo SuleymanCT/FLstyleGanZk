@@ -2,7 +2,12 @@ import torch
 
 import pytest
 
-from fl.fedavg_utils import RunningAverage, compare_state_dicts, compute_norm_percentiles
+from fl.fedavg_utils import (
+    RunningAverage,
+    assert_matching_keys,
+    compare_state_dicts,
+    compute_norm_percentiles,
+)
 
 
 def test_running_average_matches_manual_mean():
@@ -66,3 +71,17 @@ def test_compute_norm_percentiles_known_values():
 def test_compute_norm_percentiles_empty_raises():
     with pytest.raises(ValueError):
         compute_norm_percentiles([])
+
+
+def test_assert_matching_keys_passes_silently_when_equal():
+    assert_matching_keys({"a", "b"}, {"b", "a"}, context="test")  # raise etmemeli
+
+
+def test_assert_matching_keys_raises_with_missing_and_extra_details():
+    with pytest.raises(ValueError) as exc_info:
+        assert_matching_keys({"a", "b", "c"}, {"b", "c", "d"}, context="round 0 vs fedavg_0.pt")
+
+    message = str(exc_info.value)
+    assert "round 0 vs fedavg_0.pt" in message
+    assert "'a'" in message
+    assert "'d'" in message

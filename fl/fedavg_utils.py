@@ -75,6 +75,19 @@ def compare_state_dicts(a: dict, b: dict) -> dict:
     }
 
 
+def assert_matching_keys(keys_a: set, keys_b: set, context: str) -> None:
+    if keys_a == keys_b:
+        return
+
+    only_in_a = sorted(keys_a - keys_b)
+    only_in_b = sorted(keys_b - keys_a)
+    raise ValueError(
+        f"{context}: anahtar kümeleri birebir aynı değil (sessizce kesişim alınmadı). "
+        f"Sadece ilk tarafta olan ({len(only_in_a)}): {only_in_a[:20]}. "
+        f"Sadece ikinci tarafta olan ({len(only_in_b)}): {only_in_b[:20]}."
+    )
+
+
 def compute_norm_percentiles(deltas: list[float]) -> dict:
     if not deltas:
         raise ValueError("Boş delta listesinden percentile hesaplanamaz.")

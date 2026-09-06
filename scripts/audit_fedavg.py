@@ -22,7 +22,12 @@ from collections import defaultdict
 import torch
 
 from configs.loader import load_paths
-from fl.fedavg_utils import RunningAverage, compare_state_dicts, compute_norm_percentiles
+from fl.fedavg_utils import (
+    RunningAverage,
+    assert_matching_keys,
+    compare_state_dicts,
+    compute_norm_percentiles,
+)
 from fl.stylegan_xl_env import load_network_pkl
 from scripts.inventory import EXPECTED_SITES, scan_structure
 from storage.pathguard import assert_writable, open_readonly
@@ -64,17 +69,18 @@ def load_full_state_dict(pkl_path: str, stylegan_xl_repo: str) -> dict:
     return state
 
 
-MAX_UNWRAP_DEPTH = 2
-
-
 def load_fedavg_file(path: str) -> dict:
-    """fedavg_*.pt'yi {parametre_adı: tensör} olarak yükler.
+    """fedavg_*.pt'den G_ema state_dict'ini {parametre_adı: fp32 tensör} olarak yükler.
 
-    Gerçek yapı önceden bilinmiyor (bkz. scripts/probe_fedavg.py) — bu
-    yüzden düz bir state_dict varsaymak yerine savunmacı davranır: tek
-    anahtarlı bir sarmalayıcıysa (ör. {"G_ema": {...}}) bir seviye
-    içeri iner; hâlâ tensör değilse sessizce çökmek yerine hangi
-    anahtarın beklenmedik bir tip taşıdığını söyleyen net bir hata verir.
+    Gerçek yapı scripts/probe_fedavg.py ile Colab'da keşfedildi:
+    dosya `{"G": {...117 anahtar...}, "G_ema": {...117 anahtar...}}`
+    şeklinde, ikisi de düz (iç içe olmayan) state_dict'ler. `G_ema`
+    tercih edilir çünkü shard'lar (scripts/extract_shards.py) G_ema'dan
+    çıkarıldı ve FID/KID/LPIPS (Faz F) da G_ema ile ölçülüyor —
+    karşılaştırmanın tutarlı olması için burada da hep aynı ağırlık
+    kümesi (G_ema) kullanılmalı, G değil. G_ema yoksa (beklenmeyen/eski
+    bir dosya formatıysa) G'ye düşülür ve bu açıkça loglanır; ikisi de
+    yoksa uydurma yapılmaz, net bir hata verilir.
     """
     with open_readonly(path) as f:
         raw = torch.load(f, map_location="cpu", weights_only=False)
@@ -85,23 +91,29 @@ def load_fedavg_file(path: str) -> dict:
             f"Yapıyı görmek için: python -m scripts.probe_fedavg --path {path}"
         )
 
-    unwrap_depth = 0
-    while len(raw) == 1 and isinstance(next(iter(raw.values())), dict) and unwrap_depth < MAX_UNWRAP_DEPTH:
-        (only_key, inner_dict), = raw.items()
-        print(
-            f"[audit_fedavg] '{path}': tek anahtarlı sarmalayıcı tespit edildi "
-            f"('{only_key}'), bir seviye içeri iniliyor."
+    if "G_ema" in raw:
+        source_key = "G_ema"
+    elif "G" in raw:
+        print(f"[audit_fedavg] '{path}': 'G_ema' anahtarı yok, 'G'ye düşülüyor.")
+        source_key = "G"
+    else:
+        raise KeyError(
+            f"'{path}': ne 'G_ema' ne de 'G' anahtarı var. Bulunan üst seviye anahtarlar: "
+            f"{sorted(raw.keys())}. Yapıyı görmek için: python -m scripts.probe_fedavg --path {path}"
         )
-        raw = inner_dict
-        unwrap_depth += 1
+
+    state = raw[source_key]
+    if not isinstance(state, dict):
+        raise TypeError(
+            f"'{path}': '{source_key}' bir state_dict (dict) olmalıydı, bulunan: {type(state).__name__}."
+        )
 
     result = {}
-    for key, value in raw.items():
+    for key, value in state.items():
         if not torch.is_tensor(value):
-            extra = f", alt anahtarlar: {sorted(value.keys())[:10]}" if isinstance(value, dict) else ""
             raise TypeError(
-                f"'{path}': beklenen tensör, bulunan {type(value).__name__}, anahtar: '{key}'{extra}. "
-                f"Yapıyı görmek için: python -m scripts.probe_fedavg --path {path}"
+                f"'{path}': '{source_key}' içinde beklenen tensör, bulunan {type(value).__name__}, "
+                f"anahtar: '{key}'. Yapıyı görmek için: python -m scripts.probe_fedavg --path {path}"
             )
         result[key] = value.detach().cpu().to(torch.float32)
     return result
@@ -127,6 +139,9 @@ def audit_round(round_idx: int, sites: list[dict], raw_root: str, stylegan_xl_re
             print(f"[audit_fedavg] fedavg_{candidate_n}.pt bulunamadı, karşılaştırma atlanıyor.")
             continue
         fedavg_state = load_fedavg_file(fedavg_path)
+        assert_matching_keys(
+            set(computed_avg), set(fedavg_state), context=f"round {round_idx} vs fedavg_{candidate_n}.pt"
+        )
         cmp = compare_state_dicts(computed_avg, fedavg_state)
         print(
             f"[audit_fedavg] round {round_idx} hesaplanan ortalama vs fedavg_{candidate_n}.pt: "
