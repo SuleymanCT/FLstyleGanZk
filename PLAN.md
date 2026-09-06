@@ -18,16 +18,28 @@ göre retrofit edildi.
 
 ## Faz A (Colab) — Envanter ve çıkarma
 
-**durum: yapılmadı**
-(kod yazıldı — bkz. `scripts/inventory.py`, `scripts/extract_shards.py`,
+**durum: tamamlandı**
+Colab'da gerçek Drive verisiyle koşuldu: `inventory.json` (60/60
+(round,site) çifti eksiksiz), `delta_norms.json` (56 delta, p50/p90/p99
+çıkarıldı) ve `fedavg_audit.json` (15 round'un tamamında numaralandırma
+doğrulandı: `fedavg_N.pt` = round_N'in dört sitesinin fp32 ortalaması)
+üretildi ve `zk_artifacts_results/`'a commit edildi. Ayrıntılı analiz
+(mapping katmanları, fedavg numaralandırma tutarlılığı, delta-G normu
+tablosu, round 14 anomalisi, mimari tutarlılık) `docs/phase_a_report.md`'de.
+Kod: `scripts/inventory.py`, `scripts/extract_shards.py`,
 `scripts/audit_fedavg.py`, `fl/module_tree.py`, `fl/shard_utils.py`,
-`fl/fedavg_utils.py`, `fl/inventory_utils.py`, `fl/stylegan_xl_env.py`;
-saf mantık birim testleriyle doğrulandı, ama gerçek Drive verisi
-üzerinde Colab'da HENÜZ koşulmadı — kabul kriteri ancak o koşumdan
-sonra karşılanabilir. Üç script artık her yazmadan önce
-`storage.pathguard.assert_writable` çağırıyor, pkl/fedavg okumaları
-`storage.pathguard.open_readonly` ile yapılıyor — bkz. "Ortak altyapı"
-notu yukarıda.)
+`fl/fedavg_utils.py`, `fl/inventory_utils.py`, `fl/stylegan_xl_env.py`
+— hepsi her yazmadan önce `storage.pathguard.assert_writable` çağırıyor,
+pkl/fedavg okumaları `storage.pathguard.open_readonly` ile yapılıyor
+(bkz. "Ortak altyapı" notu yukarıda).
+
+**Açık nokta (Faz A kapsamında çözülmedi, sonraki faz için not):**
+`docs/phase_a_report.md` Bölüm D'de detaylandırılan round 14 anomalisi
+(4 sitenin delta-G normu ~0.0001 farkla neredeyse birebir aynı, diğer
+round'larda CV %15–100 iken burada %0.00) doğrulanmadı — genuine
+yakınsama mı yoksa veri/kaydetme kaynaklı bir tekrar mı olduğu
+`canonical_hash` karşılaştırmasıyla teyit edilmeli. Faz D'nin τ eşiği
+bu bulguyu hesaba katmalı.
 
 Girdi yapısı:
 ```
