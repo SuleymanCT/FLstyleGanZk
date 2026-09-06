@@ -23,9 +23,9 @@ local:
 colab:
   # Drive'daki SALT OKUNUR deney kökü. Hiçbir kod buraya yazmaz/silmez
   # (storage/pathguard.py: assert_writable bunu kod seviyesinde zorlar).
-  raw_root: "/content/drive/MyDrive/<TAM_YOL>/FL_Experiments/parallel_final"  # SALT OKUNUR
+  raw_root: "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/FL_Experiments/parallel_final"  # SALT OKUNUR
   # StyleGAN eğitim kökü — bu da SALT OKUNUR, sadece okuma için kullanılır.
-  stylegan_train_root: "/content/drive/MyDrive/<TAM_YOL>/StyleGANTrain"  # SALT OKUNUR
+  stylegan_train_root: "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/StyleGANTrain"  # SALT OKUNUR
   zk_root: "/content/drive/MyDrive/ZK_FL_Artifacts"
   shards_dir: "/content/drive/MyDrive/ZK_FL_Artifacts/shards"
   results_dir: "zk_artifacts_results"
