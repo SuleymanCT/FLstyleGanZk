@@ -86,7 +86,7 @@ fedavg numaralandırması kesinleşti.
 
 ## Faz B (Colab) — Oyuncak uçtan uca
 
-**durum: yapılmadı**
+**durum: tamamlandı**
 (kod yazıldı — bkz. `circuits/toy_model.py`, `circuits/ezkl_utils.py`,
 `circuits/toy_pipeline.py`, `chain/anvil.py`, `chain/client.py`,
 `tests/test_toy_pipeline.py`. ezkl çağrı sırası (gen_settings →
@@ -146,8 +146,30 @@ kendi iç solc çağrısıyla derleyip deploy/doğrulama yapıyor) devreye
 giriyor; bu yolda `deploy_gas`/`verify_gas` receipt'ten doğrudan
 alınamadığından `chain.client.Web3Client.find_transaction_gas` ile
 zincir geriye taranarak kurtarılmaya çalışılıyor (bulunamazsa `None`,
-uydurulmaz). Bu üç seviyeli fallback + native yol hâlâ Colab'da gerçek
-koşumla doğrulanmadı — bir sonraki tur bekleniyor.)
+uydurulmaz).
+
+**4. tur — BAŞARILI, Faz B TAMAMLANDI:** `chain.solc.compile_with_fallback_strategies`
+`solc=0.8.20, viaIR=False, optimizer_runs=200` ile (4. denemede)
+derledi — native fallback'e (`deploy_and_verify_via_ezkl_native`) hiç
+gerek kalmadı. Zincirin TAMAMI gerçekten çalıştı, ispat gerçekten
+zincire gönderilip doğrulandı. Ölçülen sayılar (ayrıntılı analiz:
+`docs/phase_b_report.md`):
+
+| Adım | Süre |
+|---|---:|
+| export_onnx | 0.178s |
+| ezkl_setup | 11.173s |
+| ezkl_prove | 13.566s |
+| ezkl_verify_offchain | 0.042s |
+| generate_solidity_verifier | 0.191s |
+| compile_verifier_solidity | 20.515s (4 denemenin toplamı) |
+| deploy_and_verify_onchain | 0.511s |
+
+`deploy_gas=2.956.287`, `verify_gas=546.938`,
+`deployed_bytecode_size=13.426` byte (EIP-170 sınırı 24.576'nın
+%54,6'sı). `DEFAULT_STRATEGIES` sırası, çalışan kombinasyon
+(`viaIR=False, runs=200`) ilk sıraya gelecek şekilde güncellendi —
+sonraki koşularda 3 gereksiz başarısız deneme yapılmayacak.
 
 (Artık "yerel" değil "Colab" fazı — bkz. yukarıdaki "Ortam politikası"
 notu.) Küçük MLP (32->32->8) -> ONNX -> ezkl derleme+kalibrasyon ->
@@ -155,8 +177,8 @@ ispat -> Solidity verifier üretimi -> anvil'de deploy -> Python'dan
 doğrulama. `tests/test_toy_pipeline.py` tek komutla yeşil geçsin, adım
 süreleri ve gas yazsın. anvil'i test içinden başlat ve kapat.
 
-**Kabul:** test yeşil, boru hattı çalışıyor. Buradan sonra sahte çıktı
-yok.
+**Kabul:** test yeşil, boru hattı çalışıyor — KARŞILANDI. Buradan sonra
+sahte çıktı yok.
 
 ## Faz C (yerel + Colab) — Gerçek mapping devresi
 
@@ -197,6 +219,19 @@ C3'ün (k, bit) taramasında bu uyarıların sıklığı/varlığı ve
 yanında AYRI bir sütun olarak kaydedilmeli — düşük `bit_width` (8)
 gerçek ağda bu uyarıları fatal hataya (ya da sessiz hassasiyet kaybına)
 çevirebilir, `bit_width=16` daha güvenli başlangıç noktası olabilir.
+
+**Faz B'den ikinci not (C3 için ek sütun — bytecode boyutu):** Oyuncak
+MLP'nin verifier kontratı 13.426 byte (EIP-170'in 24.576 byte sınırının
+%54,6'sı) — bkz. `docs/phase_b_report.md`. Gerçek mapping devresi
+(669.248 parametre, oyuncağın ~627 katı) çok daha fazla kısıt
+içereceğinden verifier boyutu da büyüyecek; Halo2/ezkl verifier boyutu
+kısıt sayısıyla kabaca doğrusal büyüdüğünden EIP-170'i aşma ihtimali
+gerçek. Bu yüzden **C3'ün (k, bit) benchmark ızgarasına
+`deployed_bytecode_size` ve `exceeds_eip170` de birer sütun olarak
+eklenmeli** (`chain.solc.compile_with_fallback_strategies`'in zaten
+döndürdüğü alanlar) — ispat/doğrulama başarılı olsa bile verifier
+deploy edilemiyorsa (EIP-170 aşılıyorsa) o (k, bit) kombinasyonu da
+"başarısız" sayılmalı.
 
 ## Faz D (yerel) — Kontratlar ve orkestratör
 

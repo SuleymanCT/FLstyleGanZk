@@ -22,14 +22,20 @@ DEFAULT_OPTIMIZER_RUNS = 200
 DEFAULT_EVM_VERSION = "shanghai"
 DEFAULT_TIMEOUT_SECONDS = 300.0
 
-# Denenecek (via_ir, optimizer_runs) kombinasyonları, en olası çalışana
-# göre sıralı: düşük runs daha az agresif inlining yapar, "Stack too
-# deep" riskini azaltabilir; via_ir=False + yüksek runs ayrı bir yol.
+# Denenecek (via_ir, optimizer_runs) kombinasyonları. Faz B'nin gerçek
+# Colab koşumunda ezkl==23.0.5'in ürettiği Halo2Verifier.sol için
+# `viaIR=False, optimizer_runs=200` çalıştı (solc=0.8.20) — hata
+# mesajının önerdiğinin (--via-ir) TERSİ: via-IR'in kendi Yul
+# optimizer'ı bu yoğun elle yazılmış assembly'de AYRI bir "stack too
+# deep" (YulException) çıkardı, klasik/legacy codegen + optimizer
+# sorunsuz derledi (bkz. docs/phase_b_report.md). Bu yüzden en olası
+# çalışan kombinasyon ilk sırada — sonraki koşularda 3 gereksiz
+# başarısız denemeyle zaman kaybetmemek için.
 DEFAULT_STRATEGIES = [
+    {"via_ir": False, "optimizer_runs": 200},
     {"via_ir": True, "optimizer_runs": 1},
     {"via_ir": True, "optimizer_runs": 50},
     {"via_ir": True, "optimizer_runs": 200},
-    {"via_ir": False, "optimizer_runs": 200},
 ]
 
 # Her strateji bu solc sürümlerinin her biriyle denenir (sürüm başına
