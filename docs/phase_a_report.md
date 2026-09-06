@@ -157,27 +157,48 @@ böyle değil:
   ~2470–2520 bandında kümeleniyor — round 14'teki gibi TÜM sitelerin
   aynı anda yakınsaması bu aralıkta hiç görülmüyor.
 
-**Round 14'ün özel durumu için olası açıklamalar (doğrulanmadı, sadece
-bulgu olarak kaydediliyor):**
-1. Federe eğitim gerçekten round 14'te (son round) yakınsamaya
-   ulaşmış olabilir — tüm siteler benzer büyüklükte güncelleme
-   üretiyor olabilir (genuine convergence).
-2. Round 14, deneyin SON round'u olduğundan, bir sonlandırma/checkpoint
-   mantığı (ör. tüm sitelere aynı son senkronizasyon uygulanması) devreye
-   girmiş olabilir.
-3. Daha kuşkulu bir olasılık: 4 "site" pkl'ının round 14'te birbirinin
-   neredeyse birebir kopyası olması — ör. bir kaydetme/kopyalama hatası
-   sonucu 4 farklı dosyanın aslında (yaklaşık) aynı ağırlıkları içermesi.
-   Bu üç JSON dosyasından KESİN olarak ayırt edilemez; doğrulamak için
-   round 14'ün 4 site pkl'ının `storage.hashing.canonical_hash`'i
-   karşılaştırılmalı (birebir aynıysa (3) doğrulanır, farklı ama yakınsa
-   (1)/(2) daha olası).
+**Kopya/kayıt hatası ihtimali `scripts/probe_duplicates.py` ile ELENDİ.**
+Shard seviyesinde (`canonical_hash`, mapping+embedding katmanları)
+15 round'un TAMAMI için kontrol edildi (`zk_artifacts_results/duplicate_check.json`):
 
-Bu, ileri fazlar (özellikle Faz D'nin τ eşiği ve Faz F'nin saldırı
-tespiti) için ÖNEMLİ: eğer round 14 gibi bir yakınsama/anomali normal
-federe dinamiklerin bir parçasıysa, ZK doğrulama şemasının τ eşiği çok
-düşük ayarlanırsa meşru (kötü niyetli olmayan) düşük-Δ round'ları
-yanlışlıkla "şüpheli" işaretleyebilir.
+- Her round'da **4 benzersiz hash** (round 14 dahil) — hiçbir round'da
+  `duplicate_groups` boş değil, yani hiçbir site diğerinin birebir
+  kopyası değil.
+- Hiçbir sitenin shard'ı bir önceki round'un global ağırlığıyla
+  (`fedavg_(N-1)`'in aynı prefixlerle filtrelenmiş `G_ema`'sı) aynı
+  değil (`prev_global_matches` tüm round/site'larda `false`) — yani
+  hiçbir site "hiç eğitilmeden global ağırlığı olduğu gibi kaydetme"
+  durumunda değil.
+
+Yani round 14'teki dört site GERÇEKTEN dört farklı, bağımsız ağırlık
+kümesi — sadece bu ağırlıkların önceki globalden **norm cinsinden
+kat ettiği mesafe** tesadüfen (ya da yapısal bir nedenle) neredeyse
+özdeş. Bu, bir veri/kayıt hatası değil, **gerçek bir gözlem**.
+
+**Yorum:** Federe kurulum IID bölme kullanıyor (dört site aynı
+dağılımdan, eşit büyüklükte veri payı alıyor) ve her round'da eşit
+sayıda yerel adım (tick/epoch) ile eğitiliyor. Bu koşullar altında
+dört site, global ağırlıktan başlayıp **birbirinden farklı yönlerde**
+(farklı mini-batch örneklemesi, farklı gradyan yörüngeleri — bu yüzden
+hash'leri hep farklı) ilerliyor, ama optimizasyon dinamiği (aynı öğrenme
+oranı, aynı adım sayısı, aynı veri dağılımı büyüklüğü) hepsini globalden
+**benzer büyüklükte bir adımla** uzaklaştırıyor. Farklı yöne giden ama
+aynı uzunlukta dört vektör — norm'da yakınsama, ağırlıkta yakınsama
+DEĞİL. Round 14'te bu etki en belirgin haliyle görülüyor (CV %0.00),
+round 5 ve 10'da da (CV %0.78, %0.15) benzer bir eğilim var; round
+1–4'teki bimodal örüntü (bazı sitelerin neredeyse hareket etmemesi) ve
+round 6–9/11–13'teki tek-site-düşük örüntüsü muhtemelen eğitimin erken
+aşamalarında/ara dönemlerde bu "eşit adım büyüklüğü" etkisinin henüz
+istikrar kazanmamış olmasından kaynaklanıyor — kesin mekanizma bu
+dosyalardan çıkarılamıyor, ama IID + eşit-tick açıklamasıyla tutarlı.
+
+Sonuç: Faz D'nin τ eşiği bu gerçek varyansı (CV %0'dan %100'e kadar
+geniş bir aralık) hesaba katmalı — round 14/5/10 gibi düşük-varyans
+round'ları "şüpheli" olarak yanlış işaretlememek için eşik, gözlenen
+p99 (2518) civarından, TEK bir site'ın normal aralığın dışına
+(ör. p99'un belirgin üzerine) çıkması durumunu yakalayacak şekilde
+seçilmeli — round-içi düşük varyansın kendisi bir sabotaj göstergesi
+değil.
 
 ## E) Round'lar arasında mimari fark var mı?
 

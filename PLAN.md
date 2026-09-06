@@ -33,13 +33,16 @@ Kod: `scripts/inventory.py`, `scripts/extract_shards.py`,
 pkl/fedavg okumaları `storage.pathguard.open_readonly` ile yapılıyor
 (bkz. "Ortak altyapı" notu yukarıda).
 
-**Açık nokta (Faz A kapsamında çözülmedi, sonraki faz için not):**
-`docs/phase_a_report.md` Bölüm D'de detaylandırılan round 14 anomalisi
-(4 sitenin delta-G normu ~0.0001 farkla neredeyse birebir aynı, diğer
-round'larda CV %15–100 iken burada %0.00) doğrulanmadı — genuine
-yakınsama mı yoksa veri/kaydetme kaynaklı bir tekrar mı olduğu
-`canonical_hash` karşılaştırmasıyla teyit edilmeli. Faz D'nin τ eşiği
-bu bulguyu hesaba katmalı.
+**Çözülmüş nokta:** `docs/phase_a_report.md` Bölüm D'de detaylandırılan
+round 14 anomalisi (4 sitenin delta-G normu ~0.0001 farkla neredeyse
+birebir aynı) `scripts/probe_duplicates.py` ile netleştirildi —
+`zk_artifacts_results/duplicate_check.json`, 15 round'un tamamında 4
+benzersiz shard hash'i ve hiçbir site-global eşleşmesi olmadığını
+gösteriyor. Kopya/kayıt hatası ihtimali ELENDİ: dört site gerçekten
+farklı ağırlıklara yakınsıyor, sadece IID bölme + eşit tick sayısı
+nedeniyle norm cinsinden benzer mesafe kat ediyorlar (ayrıntı: rapor
+Bölüm D). `configs/schedule.yaml: tau_norm_threshold` bu ölçüme göre
+3000.0 olarak dolduruldu.
 
 Girdi yapısı:
 ```

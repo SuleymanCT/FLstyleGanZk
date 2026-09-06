@@ -1,6 +1,4 @@
-# İspat takvimi ve kabul eşikleri. tau_norm_threshold Faz A'dan
-# (scripts/audit_fedavg.py -> delta_norms.json p50/p90/p99) önce
-# doldurulamaz, bu yüzden şimdilik null.
+# İspat takvimi ve kabul eşikleri.
 
 proof_schedule:
   # fixed_rounds: her zaman tam ispat istenecek round numaraları (ör. [0, 7, 14]).
@@ -12,5 +10,7 @@ proof_schedule:
   reputation_threshold: null
 
 # tau_norm_threshold: ΔG normunun bu değeri aşması sabotaj şüphesi
-# sayılır. Faz A sonrası delta_norms.json'daki p50/p90/p99'dan seçilecek.
-tau_norm_threshold: null
+# sayılır. delta-G p99=2518 (n=56, Faz A ölçümü); tau bunun ~1.2 katı
+# seçildi ki normal eğitimde clipping devreye girmesin, ama ölçekli
+# zehirleme saldırıları yakalansın.
+tau_norm_threshold: 3000.0
