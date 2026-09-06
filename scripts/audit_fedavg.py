@@ -64,10 +64,47 @@ def load_full_state_dict(pkl_path: str, stylegan_xl_repo: str) -> dict:
     return state
 
 
+MAX_UNWRAP_DEPTH = 2
+
+
 def load_fedavg_file(path: str) -> dict:
+    """fedavg_*.pt'yi {parametre_adı: tensör} olarak yükler.
+
+    Gerçek yapı önceden bilinmiyor (bkz. scripts/probe_fedavg.py) — bu
+    yüzden düz bir state_dict varsaymak yerine savunmacı davranır: tek
+    anahtarlı bir sarmalayıcıysa (ör. {"G_ema": {...}}) bir seviye
+    içeri iner; hâlâ tensör değilse sessizce çökmek yerine hangi
+    anahtarın beklenmedik bir tip taşıdığını söyleyen net bir hata verir.
+    """
     with open_readonly(path) as f:
-        raw = torch.load(f, map_location="cpu")
-    return {k: v.detach().cpu().to(torch.float32) for k, v in raw.items()}
+        raw = torch.load(f, map_location="cpu", weights_only=False)
+
+    if not isinstance(raw, dict):
+        raise TypeError(
+            f"'{path}': üst seviyede dict bekleniyordu, bulunan: {type(raw).__name__}. "
+            f"Yapıyı görmek için: python -m scripts.probe_fedavg --path {path}"
+        )
+
+    unwrap_depth = 0
+    while len(raw) == 1 and isinstance(next(iter(raw.values())), dict) and unwrap_depth < MAX_UNWRAP_DEPTH:
+        (only_key, inner_dict), = raw.items()
+        print(
+            f"[audit_fedavg] '{path}': tek anahtarlı sarmalayıcı tespit edildi "
+            f"('{only_key}'), bir seviye içeri iniliyor."
+        )
+        raw = inner_dict
+        unwrap_depth += 1
+
+    result = {}
+    for key, value in raw.items():
+        if not torch.is_tensor(value):
+            extra = f", alt anahtarlar: {sorted(value.keys())[:10]}" if isinstance(value, dict) else ""
+            raise TypeError(
+                f"'{path}': beklenen tensör, bulunan {type(value).__name__}, anahtar: '{key}'{extra}. "
+                f"Yapıyı görmek için: python -m scripts.probe_fedavg --path {path}"
+            )
+        result[key] = value.detach().cpu().to(torch.float32)
+    return result
 
 
 def audit_round(round_idx: int, sites: list[dict], raw_root: str, stylegan_xl_repo: str) -> tuple[dict, list[float]]:
