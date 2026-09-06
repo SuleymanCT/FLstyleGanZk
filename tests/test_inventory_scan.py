@@ -67,6 +67,25 @@ def test_find_snapshot_pkl_falls_back_and_warns(tmp_path):
     assert warning is not None
 
 
+def test_find_round_site_dirs_ignores_non_matching_site_suffix(tmp_path, capsys):
+    raw_root = str(tmp_path)
+    for round_idx in range(15):
+        for site_idx in range(4):
+            _make_site(raw_root, round_idx, site_idx)
+
+    # site_0_test gibi ek, yanlış adlandırılmış bir "site" klasörü — sıkı
+    # regex (^site_[0-3]$) buna uymaz, yoksayılmalı.
+    bogus_dir = os.path.join(raw_root, "round_5", "site_0_test", "00000-stylegan3-r-site0")
+    _touch(os.path.join(bogus_dir, "network-snapshot.pkl"))
+
+    entries = find_round_site_dirs(raw_root)
+    captured = capsys.readouterr()
+
+    assert len(entries) == 60  # 61 değil
+    assert "site_0_test" in captured.out
+    assert "Yoksayıldı" in captured.out
+
+
 def test_scan_structure_reports_missing_pairs_and_fedavg_files(tmp_path):
     raw_root = str(tmp_path)
     for round_idx in range(2):

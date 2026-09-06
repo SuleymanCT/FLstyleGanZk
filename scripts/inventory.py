@@ -18,6 +18,7 @@ import gc
 import glob
 import json
 import os
+import re
 
 from configs.loader import load_paths
 from fl.inventory_utils import classify_pkl_paths, compare_training_options, parse_stats_jsonl
@@ -28,6 +29,7 @@ from storage.pathguard import assert_writable
 EXPECTED_ROUNDS = 15  # round_0..round_14
 EXPECTED_SITES = 4  # site_0..site_3
 EXPECTED_FILES = ("log.txt", "stats.jsonl", "training_options.json")
+SITE_DIR_PATTERN = re.compile(r"^site_[0-3]$")
 
 
 def parse_args(argv=None):
@@ -64,6 +66,14 @@ def find_round_site_dirs(raw_root: str) -> list[tuple[int, int, str]]:
         if round_part is None or site_part is None:
             print(f"UYARI: beklenmeyen dizin adı, round/site çıkarılamadı: {d}")
             continue
+
+        if not SITE_DIR_PATTERN.match(site_part):
+            print(
+                f"[inventory] Yoksayıldı: '{d}' — site dizini adı beklenen desene "
+                f"(^site_[0-3]$) uymuyor, bulunan: '{site_part}'."
+            )
+            continue
+
         try:
             round_idx = int(round_part.split("_")[1])
             site_idx = int(site_part.split("_")[1])
