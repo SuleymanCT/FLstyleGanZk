@@ -125,8 +125,29 @@ ile `viaIR=true`, `optimizer.enabled=true`/`runs=200`,
 deployed (runtime) bytecode boyutunu EIP-170'in 24576 byte sınırına
 karşı kontrol edip aşarsa uyarı basıyor ve raporda `exceeds_eip170`
 olarak taşıyor. Saf ayrıştırma mantığı (`_parse_standard_json_output`)
-sentetik solc çıktılarıyla test edildi. EVM/deploy adımları (7-8) hâlâ
-Colab'da doğrulanmadı — bir sonraki koşum turu bekleniyor.)
+sentetik solc çıktılarıyla test edildi.
+
+**3. tur:** viaIR açıldı ama FARKLI bir hatayla karşılaşıldı: `YulException:
+Cannot swap Variable usr$l_blind with Slot TMP[mulmod, 0]: too deep in
+the stack by 1 slots` — yani tek bir (viaIR, runs) kombinasyonu her
+zaman yetmiyor. Düzeltildi: `chain/solc.py: compile_with_fallback_strategies`
+eklendi — `DEFAULT_SOLC_VERSIONS` (`0.8.20`, `0.8.24`, `0.8.26`) ×
+`DEFAULT_STRATEGIES` (`viaIR=True` ile `runs∈{1,50,200}`, sonra
+`viaIR=False` ile `runs=200`) kombinasyonlarını SIRAYLA dener, her
+denemenin sonucunu loglar, ilk başarılıyı `used_strategy` etiketiyle
+döner, hepsi başarısız olursa hepsinin özetini içeren tek bir hata
+fırlatır. `read_source_header` Verifier.sol'un ilk 20 satırını (pragma)
+loglar. Farklı solc sürümüne geçiş `solc-select install/use` ile
+yapılıyor (`_ensure_solc_version`). SON ÇARE olarak
+`deploy_and_verify_via_ezkl_native` eklendi: tüm kombinasyonlar
+başarısız olursa, ezkl'nin resmi Python binding'inde doğrulanmış kendi
+`deploy_evm`/`verify_evm` fonksiyonları (sol dosyasını doğrudan alıp
+kendi iç solc çağrısıyla derleyip deploy/doğrulama yapıyor) devreye
+giriyor; bu yolda `deploy_gas`/`verify_gas` receipt'ten doğrudan
+alınamadığından `chain.client.Web3Client.find_transaction_gas` ile
+zincir geriye taranarak kurtarılmaya çalışılıyor (bulunamazsa `None`,
+uydurulmaz). Bu üç seviyeli fallback + native yol hâlâ Colab'da gerçek
+koşumla doğrulanmadı — bir sonraki tur bekleniyor.)
 
 (Artık "yerel" değil "Colab" fazı — bkz. yukarıdaki "Ortam politikası"
 notu.) Küçük MLP (32->32->8) -> ONNX -> ezkl derleme+kalibrasyon ->

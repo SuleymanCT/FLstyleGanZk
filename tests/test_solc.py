@@ -1,10 +1,13 @@
 import pytest
 
+import chain.solc as solc_module
 from chain.solc import (
     EIP170_MAX_DEPLOYED_BYTECODE_SIZE,
     _parse_standard_json_output,
     build_standard_json_input,
+    compile_with_fallback_strategies,
     format_solc_messages,
+    read_source_header,
 )
 
 
@@ -87,3 +90,71 @@ def test_parse_standard_json_output_picks_largest_creation_bytecode_among_multip
 def test_format_solc_messages_falls_back_to_message_field():
     messages = format_solc_messages([{"message": "plain message"}])
     assert "plain message" in messages
+
+
+def test_read_source_header_returns_first_n_lines(tmp_path):
+    sol_path = tmp_path / "Verifier.sol"
+    sol_path.write_text("\n".join(f"line{i}" for i in range(30)), encoding="utf-8")
+
+    header = read_source_header(sol_path, num_lines=5)
+
+    assert header.count("\n") == 5  # ilk 5 satırın hepsi \n ile bitiyor
+    assert "line0" in header
+    assert "line4" in header
+    assert "line5" not in header
+
+
+def test_read_source_header_handles_short_file(tmp_path):
+    sol_path = tmp_path / "Verifier.sol"
+    sol_path.write_text("pragma solidity ^0.8.20;\n", encoding="utf-8")
+
+    header = read_source_header(sol_path, num_lines=20)
+
+    assert header == "pragma solidity ^0.8.20;\n"
+
+
+def test_compile_with_fallback_strategies_returns_first_success(tmp_path, monkeypatch):
+    sol_path = tmp_path / "Verifier.sol"
+    sol_path.write_text("pragma solidity ^0.8.20;\ncontract Verifier {}\n", encoding="utf-8")
+
+    monkeypatch.setattr(solc_module, "_ensure_solc_version", lambda version: None)
+
+    attempted = []
+
+    def fake_compile(path, optimizer_runs, via_ir, evm_version, timeout):
+        attempted.append((optimizer_runs, via_ir))
+        if len(attempted) < 3:
+            raise RuntimeError("Stack too deep")
+        return {"bytecode": b"\x60\x01", "deployed_bytecode_size": 1, "exceeds_eip170": False, "abi": [], "warnings": []}
+
+    monkeypatch.setattr(solc_module, "compile_solidity", fake_compile)
+
+    result = compile_with_fallback_strategies(sol_path, solc_versions=["0.8.20"])
+
+    assert len(attempted) == 3  # ilk iki kombinasyon basarisiz, ucuncu basarili
+    assert "used_strategy" in result
+    assert result["bytecode"] == b"\x60\x01"
+
+
+def test_compile_with_fallback_strategies_raises_combined_error_when_all_fail(tmp_path, monkeypatch):
+    sol_path = tmp_path / "Verifier.sol"
+    sol_path.write_text("pragma solidity ^0.8.20;\ncontract Verifier {}\n", encoding="utf-8")
+
+    monkeypatch.setattr(solc_module, "_ensure_solc_version", lambda version: None)
+
+    def always_fail(path, optimizer_runs, via_ir, evm_version, timeout):
+        raise RuntimeError(f"Stack too deep (runs={optimizer_runs}, via_ir={via_ir})")
+
+    monkeypatch.setattr(solc_module, "compile_solidity", always_fail)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        compile_with_fallback_strategies(
+            sol_path,
+            solc_versions=["0.8.20"],
+            strategies=[{"via_ir": True, "optimizer_runs": 1}, {"via_ir": False, "optimizer_runs": 200}],
+        )
+
+    message = str(exc_info.value)
+    assert "2 deneme" in message
+    assert "runs=1" in message
+    assert "runs=200" in message

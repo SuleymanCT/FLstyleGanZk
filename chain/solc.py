@@ -22,6 +22,21 @@ DEFAULT_OPTIMIZER_RUNS = 200
 DEFAULT_EVM_VERSION = "shanghai"
 DEFAULT_TIMEOUT_SECONDS = 300.0
 
+# Denenecek (via_ir, optimizer_runs) kombinasyonları, en olası çalışana
+# göre sıralı: düşük runs daha az agresif inlining yapar, "Stack too
+# deep" riskini azaltabilir; via_ir=False + yüksek runs ayrı bir yol.
+DEFAULT_STRATEGIES = [
+    {"via_ir": True, "optimizer_runs": 1},
+    {"via_ir": True, "optimizer_runs": 50},
+    {"via_ir": True, "optimizer_runs": 200},
+    {"via_ir": False, "optimizer_runs": 200},
+]
+
+# Her strateji bu solc sürümlerinin her biriyle denenir (sürüm başına
+# solc-select ile geçiş yapılır). ezkl==23.0.5'in ürettiği pragma'ya
+# göre hepsi uygun olmayabilir — o yüzden pragma/ilk satırlar loglanır.
+DEFAULT_SOLC_VERSIONS = ["0.8.20", "0.8.24", "0.8.26"]
+
 
 def build_standard_json_input(
     source_name: str,
@@ -47,6 +62,21 @@ def format_solc_messages(entries: list[dict]) -> str:
     for entry in entries:
         lines.append(entry.get("formattedMessage") or entry.get("message") or json.dumps(entry))
     return "\n".join(lines)
+
+
+def read_source_header(sol_path: Path, num_lines: int = 20) -> str:
+    """Bir .sol dosyasının ilk `num_lines` satırını döner (pragma/sürüm
+    bilgisini görmek için — hangi solc sürümünün beklendiğini anlamaya
+    yarar)."""
+    sol_path = Path(sol_path)
+    lines: list[str] = []
+    with open(sol_path, "r", encoding="utf-8") as f:
+        for _ in range(num_lines):
+            line = f.readline()
+            if not line:
+                break
+            lines.append(line)
+    return "".join(lines)
 
 
 def _parse_standard_json_output(output: dict) -> dict:
@@ -167,3 +197,91 @@ def compile_solidity(
         print("[solc] UYARI: deployedBytecode alınamadı, EIP-170 kontrolü atlanıyor.")
 
     return parsed
+
+
+def _ensure_solc_version(version: str) -> None:
+    """`solc-select` ile verilen sürümü kurar (zaten kuruluysa idempotent)
+    ve aktive eder. `scripts/setup_colab.sh`'ın kurduğu `solc-select`
+    aracına bağımlıdır."""
+    print(f"[solc-select] '{version}' kuruluyor/aktive ediliyor...")
+
+    install = subprocess.run(["solc-select", "install", version], capture_output=True, text=True)
+    combined = (install.stdout + install.stderr).lower()
+    if install.returncode != 0 and "already installed" not in combined and "already present" not in combined:
+        raise RuntimeError(
+            f"[solc-select] '{version}' kurulamadı (returncode={install.returncode}):\n"
+            f"stdout={install.stdout}\nstderr={install.stderr}"
+        )
+
+    use = subprocess.run(["solc-select", "use", version], capture_output=True, text=True)
+    if use.returncode != 0:
+        raise RuntimeError(
+            f"[solc-select] '{version}' aktive edilemedi (returncode={use.returncode}):\n"
+            f"stdout={use.stdout}\nstderr={use.stderr}"
+        )
+    print(f"[solc-select] Aktif sürüm: {version}")
+
+
+def compile_with_fallback_strategies(
+    sol_path: Path,
+    solc_versions: list[str] | None = None,
+    strategies: list[dict] | None = None,
+    timeout: float = DEFAULT_TIMEOUT_SECONDS,
+) -> dict:
+    """Birden fazla (solc sürümü × via_ir × optimizer_runs) kombinasyonunu
+    SIRAYLA dener, ilk BAŞARILI olanı `used_strategy` alanıyla birlikte
+    döner. Her denemenin sonucu (başarılı/başarısız + hata özeti)
+    loglanır. Hepsi başarısız olursa hepsinin özetini içeren TEK bir
+    `RuntimeError` fırlatılır (hangi kombinasyonların denendiği ve neden
+    başarısız olduğu kaybolmaz).
+
+    ezkl'nin ürettiği Halo2Verifier.sol bazı ölçeklerde/sürümlerde
+    "Stack too deep" ile derlenemeyebiliyor; hangi ayarın işe yarayacağı
+    önceden güvenilir şekilde tahmin edilemez, bu yüzden gerçekten
+    deneniyor.
+    """
+    sol_path = Path(sol_path)
+    versions = solc_versions if solc_versions is not None else DEFAULT_SOLC_VERSIONS
+    combos = strategies if strategies is not None else DEFAULT_STRATEGIES
+
+    header = read_source_header(sol_path, 20)
+    print(f"[solc] '{sol_path.name}' ilk 20 satır (pragma/sürüm bilgisi için):\n{header}")
+
+    failed_attempts: list[str] = []
+    current_version: str | None = None
+
+    for version in versions:
+        if version != current_version:
+            try:
+                _ensure_solc_version(version)
+                current_version = version
+            except RuntimeError as e:
+                summary = f"solc-select({version}): {e}"
+                print(f"[solc] BAŞARISIZ: {summary}")
+                failed_attempts.append(summary)
+                continue
+
+        for combo in combos:
+            label = f"solc={version}, viaIR={combo['via_ir']}, optimizer_runs={combo['optimizer_runs']}"
+            print(f"[solc] Deneniyor: {label}")
+            try:
+                result = compile_solidity(
+                    sol_path,
+                    optimizer_runs=combo["optimizer_runs"],
+                    via_ir=combo["via_ir"],
+                    evm_version=combo.get("evm_version", DEFAULT_EVM_VERSION),
+                    timeout=timeout,
+                )
+            except Exception as e:  # noqa: BLE001 - deneme sonucu kaydediliyor, tüm denemeler bitince tek hata fırlatılıyor
+                summary = f"{label}: {type(e).__name__}: {e}"
+                print(f"[solc] BAŞARISIZ: {summary}")
+                failed_attempts.append(summary)
+                continue
+
+            print(f"[solc] BAŞARILI: {label}")
+            result["used_strategy"] = label
+            return result
+
+    raise RuntimeError(
+        f"[solc] {len(failed_attempts)} deneme de başarısız oldu:\n" + "\n".join(f"- {a}" for a in failed_attempts)
+    )

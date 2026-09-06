@@ -72,3 +72,24 @@ class Web3Client:
         receipt = self._send_and_wait({"to": to, "data": hex_data}, private_key)
         success = receipt["status"] == 1
         return success, receipt["gasUsed"]
+
+    def find_transaction_gas(self, *, contract_address: str | None = None, to_address: str | None = None) -> int | None:
+        """Zinciri (geriye doğru) tarayıp verilen kritere uyan işlemin
+        gasUsed'ini bulur. `ezkl.deploy_evm`/`verify_evm` gibi kendi
+        transaction'ını kendi gönderen fonksiyonlardan SONRA gas rakamını
+        geri kazanmak için kullanılır — yerel/izole bir anvil zincirinde
+        tüm blokları taramak ucuzdur. Bulamazsa None döner (uydurmaz).
+        """
+        latest = self.w3.eth.block_number
+        for block_num in range(latest, -1, -1):
+            block = self.w3.eth.get_block(block_num, full_transactions=True)
+            for tx in block["transactions"]:
+                if contract_address is not None:
+                    receipt = self.w3.eth.get_transaction_receipt(tx["hash"])
+                    created = receipt.get("contractAddress")
+                    if created and created.lower() == contract_address.lower():
+                        return receipt["gasUsed"]
+                elif to_address is not None and tx.get("to") and tx["to"].lower() == to_address.lower():
+                    receipt = self.w3.eth.get_transaction_receipt(tx["hash"])
+                    return receipt["gasUsed"]
+        return None

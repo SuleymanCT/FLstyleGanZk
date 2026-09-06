@@ -30,7 +30,7 @@ import torch
 
 from chain.anvil import AnvilProcess
 from chain.client import Web3Client
-from chain.solc import compile_solidity
+from chain.solc import compile_with_fallback_strategies
 from circuits.ezkl_utils import run_async, run_get_srs
 
 INPUT_VISIBILITY = "private"
@@ -136,12 +136,15 @@ def generate_solidity_verifier(paths: dict, work_dir: Path) -> tuple[Path, Path]
 
 
 def compile_verifier_solidity(sol_path: Path) -> dict:
-    """ezkl'nin ürettiği Verifier.sol yoğun assembly içerir; varsayılan
-    solc ayarları "Stack too deep" ile başarısız olur (Faz B'nin 2.
-    Colab koşumunda görüldü) — bu yüzden `chain.solc.compile_solidity`
-    `viaIR=True` + optimizer ile standard-JSON üzerinden derler.
+    """ezkl'nin ürettiği Verifier.sol yoğun assembly içerir; ne varsayılan
+    solc ayarları ("Stack too deep") ne de tek başına `viaIR=True` +
+    `optimizer_runs=200` (Faz B'nin 2. ve 3. Colab koşumlarında görüldü —
+    3.'de "Cannot swap Variable ... too deep in the stack by 1 slots")
+    her zaman yetiyor. `chain.solc.compile_with_fallback_strategies`
+    birden fazla (solc sürümü × viaIR × optimizer_runs) kombinasyonunu
+    sırayla dener, ilk çalışanı kullanır.
     """
-    return compile_solidity(sol_path, via_ir=True, optimizer_runs=200, evm_version="shanghai")
+    return compile_with_fallback_strategies(sol_path)
 
 
 def deploy_and_verify_onchain(bytecode: bytes, proof_path: Path, work_dir: Path, anvil: AnvilProcess) -> dict:
@@ -170,6 +173,56 @@ def deploy_and_verify_onchain(bytecode: bytes, proof_path: Path, work_dir: Path,
         "deploy_gas": deploy_gas,
         "verify_gas": verify_gas,
         "verified": verified,
+    }
+
+
+def deploy_and_verify_via_ezkl_native(sol_path: Path, proof_path: Path, work_dir: Path, anvil: AnvilProcess) -> dict:
+    """SON ÇARE: `chain.solc.compile_with_fallback_strategies`'in TÜM
+    kombinasyonları başarısız olursa, manuel solc derleme + web3 deploy
+    yerine ezkl'nin KENDİ `deploy_evm`/`verify_evm` fonksiyonlarını
+    kullanır — bunlar `sol_code_path`'i doğrudan alıp kendi iç solc
+    çağrısıyla derleyip deploy/doğrulama yapıyor (resmi ezkl.pyi'de
+    doğrulandı: `deploy_evm(addr_path, sol_code_path, rpc_url,
+    contract_type, optimizer_runs, private_key)`,
+    `verify_evm(addr_verifier, proof_path, rpc_url, vka_path)`).
+
+    BİLİNÇLİ BELİRSİZLİK: `contract_type` parametresinin beklenen tam
+    değeri (ör. "verifier") resmi dokümantasyonda açıklanmıyor — burada
+    "verifier" deneniyor, yanlışsa ezkl'nin kendi hata mesajı burada
+    (adım adı ile sarılı) görünecek. Bu yol kendi transaction'ını kendi
+    gönderdiğinden `deploy_gas`/`verify_gas` receipt'ten doğrudan
+    alınamıyor — `Web3Client.find_transaction_gas` ile geriye dönük
+    zincir taramasıyla kurtarılmaya çalışılıyor, bulunamazsa `None`
+    kalır (uydurulmaz).
+    """
+    if not anvil.accounts:
+        raise RuntimeError("anvil hesap listesi boş — deploy için hesap yok.")
+    _, private_key = anvil.accounts[0]
+    client = Web3Client(anvil.rpc_url)
+
+    addr_path = work_dir / "verifier_address.txt"
+    print("[toy_pipeline]  ezkl.deploy_evm (native) ile deploy ediliyor...")
+    run_async(ezkl.deploy_evm, str(addr_path), str(sol_path), anvil.rpc_url, "verifier", 200, private_key)
+    if not addr_path.exists():
+        raise RuntimeError(f"deploy_evm sonrası adres dosyası yok: {addr_path}")
+    address = addr_path.read_text(encoding="utf-8").strip()
+    print(f"[toy_pipeline]  Deploy edildi (native): {address}")
+
+    deploy_gas = client.find_transaction_gas(contract_address=address)
+    print(f"[toy_pipeline]  deploy_gas (geriye dönük bulundu): {deploy_gas}")
+
+    print("[toy_pipeline]  ezkl.verify_evm (native) ile doğrulanıyor...")
+    verified = bool(run_async(ezkl.verify_evm, address, str(proof_path), anvil.rpc_url, None))
+
+    verify_gas = client.find_transaction_gas(to_address=address)
+    print(f"[toy_pipeline]  verify_gas (geriye dönük bulundu): {verify_gas}")
+
+    return {
+        "contract_address": address,
+        "deploy_gas": deploy_gas,
+        "verify_gas": verify_gas,
+        "verified": verified,
+        "used_native_ezkl_deploy": True,
     }
 
 
@@ -209,9 +262,24 @@ def run_full_pipeline(work_dir: Path, anvil: AnvilProcess) -> dict:
         raise RuntimeError("[adım: ezkl_verify_offchain] ezkl.verify False döndürdü — zincir dışı doğrulama başarısız.")
 
     sol_path, _abi_path = _run_step(report, "generate_solidity_verifier", generate_solidity_verifier, ezkl_paths, work_dir)
-    compiled = _run_step(report, "compile_verifier_solidity", compile_verifier_solidity, sol_path)
+
+    try:
+        compiled = _run_step(report, "compile_verifier_solidity", compile_verifier_solidity, sol_path)
+    except RuntimeError as e:
+        print(
+            f"[toy_pipeline] TÜM solc stratejileri başarısız oldu, ezkl'nin kendi "
+            f"deploy_evm/verify_evm yoluna (son çare) düşülüyor. Sebep:\n{e}"
+        )
+        report["solc_fallback_reason"] = str(e)
+        onchain = _run_step(
+            report, "deploy_and_verify_via_ezkl_native", deploy_and_verify_via_ezkl_native, sol_path, proof_path, work_dir, anvil
+        )
+        report.update(onchain)
+        return report
+
     report["deployed_bytecode_size"] = compiled["deployed_bytecode_size"]
     report["exceeds_eip170"] = compiled["exceeds_eip170"]
+    report["used_solc_strategy"] = compiled.get("used_strategy")
     if compiled["exceeds_eip170"]:
         print(
             "[toy_pipeline] UYARI: verifier'ın deployed bytecode'u EIP-170 sınırını aşıyor, "
