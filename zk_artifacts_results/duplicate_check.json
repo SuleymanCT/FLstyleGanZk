@@ -1,0 +1,284 @@
+{
+  "per_round": [
+    {
+      "round": 0,
+      "site_hashes": {
+        "0": "76bcf0fcd9c10fe08cc88a9dfa09b2f8641549840f97980579452ff19f3a112b",
+        "1": "490e61793bb527114606bbd04a47f0f1edb820d67094de8d2a43d14428024a98",
+        "2": "78f3a215ee40a255f3bf5d63117c8a244123bedbb313fa0a16d4f52a27228ca7",
+        "3": "7505a3ee3e5136f5b9781bedb922ff7c4451bfc88825c2ce8b1c7ac4c0a11ef7"
+      },
+      "num_unique_hashes": 4,
+      "duplicate_groups": [],
+      "prev_global_path": null,
+      "prev_global_hash": null,
+      "prev_global_matches": {}
+    },
+    {
+      "round": 1,
+      "site_hashes": {
+        "0": "78ab94fe0173518a685783a0b29a5483845176bebc1c9408cd2e062a9459b7d3",
+        "1": "c4ad2e66df6e3c640e54a2f181da243b746997fab88f1217084163c6ebea04c5",
+        "2": "1148d485013f5196bb828c8c6e5c450c0a39829fef1398e4bfac6dc2bf48b26a",
+        "3": "3a6b56dfe9bec34d9115130f1541096459728eea25f96184c95a97396ed8740e"
+      },
+      "num_unique_hashes": 4,
+      "duplicate_groups": [],
+      "prev_global_path": "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/FL_Experiments/parallel_final/fedavg_0.pt",
+      "prev_global_hash": "cb8d3e0c0b1b402e2325a2a2436a3521bc86c6cfc250312cfddd40715c69e3e8",
+      "prev_global_matches": {
+        "0": false,
+        "1": false,
+        "2": false,
+        "3": false
+      }
+    },
+    {
+      "round": 2,
+      "site_hashes": {
+        "0": "731c383adb81a820cd2d51279b96f79d063831ed4d1e6a5dca64c675de3220bb",
+        "1": "3e37cbff0ac0e56de212870bc6b5f7983ebc91123ac317e116a68a06ab170a13",
+        "2": "66c956b31528f42ad5dd2c1c6da5129b823373dbc72e163632cbc07fbbafb31c",
+        "3": "1ab3e77bdf3420592f729ea2ad60e3fdf2b66cb4c47ccc3d83409043bbc3121b"
+      },
+      "num_unique_hashes": 4,
+      "duplicate_groups": [],
+      "prev_global_path": "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/FL_Experiments/parallel_final/fedavg_1.pt",
+      "prev_global_hash": "54b40cca038a132e7e02349be4cd78adc93b6a62668969f368fe96a29e89986d",
+      "prev_global_matches": {
+        "0": false,
+        "1": false,
+        "2": false,
+        "3": false
+      }
+    },
+    {
+      "round": 3,
+      "site_hashes": {
+        "0": "544feaefdc401b53b0738212e99ed854549dd447885d3cbde116d79f6142ed01",
+        "1": "edb166af939ab75dcbae0e3ceb188ac46588a62c79811103c84c12e764e85e36",
+        "2": "50cbf47a7aa8084f7a5b656e3dc57423cb86b30c6f0616236e4338a8c0bcb754",
+        "3": "ba0197ac7707712f2c1d8a1ad7cb963fe5634e3abcfa9b3eb6cee5cc97b6951c"
+      },
+      "num_unique_hashes": 4,
+      "duplicate_groups": [],
+      "prev_global_path": "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/FL_Experiments/parallel_final/fedavg_2.pt",
+      "prev_global_hash": "77ea33cfb7149824a676660c1ee17e026af9f8fe9619f01150291f73eb1cb2ce",
+      "prev_global_matches": {
+        "0": false,
+        "1": false,
+        "2": false,
+        "3": false
+      }
+    },
+    {
+      "round": 4,
+      "site_hashes": {
+        "0": "bf7e2c611726178f33b720a73983a3fd112c9783880da7db4808a5f772dc4b80",
+        "1": "a3c56d366c244a62e590e3aee27e54bb4585f178b8cd8fe420cd642a2a138bc8",
+        "2": "ce63e45639daf9e5297188b492275d9abb47b6e8d8ee1a0cf40d5dd6b982be22",
+        "3": "26f9d93a0b010dee7c739e3c10904cee228ca4484d9f5faead5f82ab8e37f092"
+      },
+      "num_unique_hashes": 4,
+      "duplicate_groups": [],
+      "prev_global_path": "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/FL_Experiments/parallel_final/fedavg_3.pt",
+      "prev_global_hash": "f39d62f2920cc247b624edc82c13763ff25928881792af027afe0a4855787703",
+      "prev_global_matches": {
+        "0": false,
+        "1": false,
+        "2": false,
+        "3": false
+      }
+    },
+    {
+      "round": 5,
+      "site_hashes": {
+        "0": "294118399899aa501ef2c706809188bdaaa6c93c6794565128f30054b7f3a44d",
+        "1": "e40428865b0651aaa52026080617449d78e4ce46f1ed62556e8d4908a77ea9fa",
+        "2": "ad2425b3de2356433f47e46fcf31207efce9700c03bb28a2c5d55c817e0ba7df",
+        "3": "33368b49c045adb3629a87ede04c2bbf2c0817ce01f5d1216824f5f669031464"
+      },
+      "num_unique_hashes": 4,
+      "duplicate_groups": [],
+      "prev_global_path": "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/FL_Experiments/parallel_final/fedavg_4.pt",
+      "prev_global_hash": "c5968a39754994b5c84e4d9fdc6282a21ef959a46b508fad8a5ebc6dac78d9dd",
+      "prev_global_matches": {
+        "0": false,
+        "1": false,
+        "2": false,
+        "3": false
+      }
+    },
+    {
+      "round": 6,
+      "site_hashes": {
+        "0": "1f35a20a918b9c1e0c36efdae4e8b3ed9b8e2300cc09654cc87c0ab64f38fd6f",
+        "1": "3fb1a73fd5a2c3b184639a686acadc41a5465781f6c3894072cb184e6af3e67b",
+        "2": "aa0eadc54aa2da328507912c499b362067037ec1f2be22c6caced95e4f11dd9e",
+        "3": "4f479eef48fd63384801806a392521508dc2f7e57831694333e16de75a767932"
+      },
+      "num_unique_hashes": 4,
+      "duplicate_groups": [],
+      "prev_global_path": "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/FL_Experiments/parallel_final/fedavg_5.pt",
+      "prev_global_hash": "bf16569582a7e49f35edd8e4d070b54b208d361b2bc8324264e5c68552e2e218",
+      "prev_global_matches": {
+        "0": false,
+        "1": false,
+        "2": false,
+        "3": false
+      }
+    },
+    {
+      "round": 7,
+      "site_hashes": {
+        "0": "095f8626e075df100e5495f434f82f05257b45656ef727b326fc92c9a0ac5206",
+        "1": "cd21ab17e7ec9db692060bff7e36acbe5f47c1adb5d52f53bd824c7d4e35189e",
+        "2": "98b9028e43ae8186c30f04470248e11706f73aaec1e23a63acd80082ac83cc83",
+        "3": "4afbbc3fb7414468ea9dd94ecdb183feee545637ff63e15b82ac3e88007dd259"
+      },
+      "num_unique_hashes": 4,
+      "duplicate_groups": [],
+      "prev_global_path": "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/FL_Experiments/parallel_final/fedavg_6.pt",
+      "prev_global_hash": "f821b4867571a92ae73dce7777a1218215ffce96ecd2a1007ee807c4428c8772",
+      "prev_global_matches": {
+        "0": false,
+        "1": false,
+        "2": false,
+        "3": false
+      }
+    },
+    {
+      "round": 8,
+      "site_hashes": {
+        "0": "50a2846943179b4d4f8b34b97411ab6e4f567a81668d950c9dc1924cc3aefffe",
+        "1": "baca9e39228d105e5af053f11c9f026d6cace3aa27cbee073201e319220ab97f",
+        "2": "f42285f13dbb5c2185effc1db3567cc3a4281f265c675c5dc8350850cd40dfd9",
+        "3": "758a7b436b6b07341fbf91233f787db2dc75512b4b4c14a5a055de457883e71a"
+      },
+      "num_unique_hashes": 4,
+      "duplicate_groups": [],
+      "prev_global_path": "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/FL_Experiments/parallel_final/fedavg_7.pt",
+      "prev_global_hash": "2d536a85a462686522fcee9e1a4b50030c55c2fa842a3c2d1d5a5f01335b1e6c",
+      "prev_global_matches": {
+        "0": false,
+        "1": false,
+        "2": false,
+        "3": false
+      }
+    },
+    {
+      "round": 9,
+      "site_hashes": {
+        "0": "72fef2283fee591c2b8bbb81131548531c79350004ec8cc5bc0d84d642088129",
+        "1": "d3635131950312f0f1fa0cdb55f6571b4f93a077842b986b549c7834d47a62c1",
+        "2": "bff73726ee95c86fa3f7a2ee2cd67de4d2119e3fadf0ccb538524d3bf89c4804",
+        "3": "2f708dc03b549cf2b3271f4c31778afb7b5e46db6cff0e453a331b7bc0119376"
+      },
+      "num_unique_hashes": 4,
+      "duplicate_groups": [],
+      "prev_global_path": "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/FL_Experiments/parallel_final/fedavg_8.pt",
+      "prev_global_hash": "c116ea31c91ed2b5def6ede7b0521dce7017bf5d9d00ee01ebad90bf693015d3",
+      "prev_global_matches": {
+        "0": false,
+        "1": false,
+        "2": false,
+        "3": false
+      }
+    },
+    {
+      "round": 10,
+      "site_hashes": {
+        "0": "f8989e1401dfd62b4955db9d56908f3806d6503debdc0861142eedba3f1d68a3",
+        "1": "694bc309db6069c2c0f4b8baa5fa1e84a33a2916b81d57119d0805e4084b9901",
+        "2": "c595d89dc2605390fcec776ede6cd8997d2cc2b17df66d92ec75f24f83e10def",
+        "3": "c121d22e0437357bd8d5bd2076d34c7eb9f04d1d9ae61bd59060919fcd10a68b"
+      },
+      "num_unique_hashes": 4,
+      "duplicate_groups": [],
+      "prev_global_path": "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/FL_Experiments/parallel_final/fedavg_9.pt",
+      "prev_global_hash": "f683556bf995e660d90895ff3abd11164b8e919e7dce4f6db0c896fa7b382b98",
+      "prev_global_matches": {
+        "0": false,
+        "1": false,
+        "2": false,
+        "3": false
+      }
+    },
+    {
+      "round": 11,
+      "site_hashes": {
+        "0": "c58b86a2da1ee870a445fb8c096c45de6a615283dbb603ce31fe6a1bd3aed8ac",
+        "1": "a82e55f3a66f47de4a78311be56ccce0c5ab510cd354d3a0fa67402fea4a9da1",
+        "2": "45eb85c636315ed377ac573cd8dbce3dc1fcbb0ef591ca24d9757b7657733ccf",
+        "3": "1b0920f976c511c8048a7b188b1a588ee8e70a0e8eef1067957bb090b402804e"
+      },
+      "num_unique_hashes": 4,
+      "duplicate_groups": [],
+      "prev_global_path": "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/FL_Experiments/parallel_final/fedavg_10.pt",
+      "prev_global_hash": "40a364391d192d47eb5e59d8933d113c033d621ec40d8f6b00bb988b7a192ce2",
+      "prev_global_matches": {
+        "0": false,
+        "1": false,
+        "2": false,
+        "3": false
+      }
+    },
+    {
+      "round": 12,
+      "site_hashes": {
+        "0": "4785ac91061a67fa5d262561646383d12a47c21a38b62954e87fcabcc6517431",
+        "1": "54217135b600f926da56b33e6602b7480b758ac7f77650645b276815f13b32f5",
+        "2": "0a441e241e04629b21033052e6ae3c957c84533025dc0bdd6347e78b9e8f0a58",
+        "3": "be40f85d9751a6bd68f2ed86ede6d2a420fd9743bc8d7a4b1175710711f48a09"
+      },
+      "num_unique_hashes": 4,
+      "duplicate_groups": [],
+      "prev_global_path": "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/FL_Experiments/parallel_final/fedavg_11.pt",
+      "prev_global_hash": "c502c97723459ae0c2e6de0870d1389d8762e8049a0c72f2992050beda5fed6d",
+      "prev_global_matches": {
+        "0": false,
+        "1": false,
+        "2": false,
+        "3": false
+      }
+    },
+    {
+      "round": 13,
+      "site_hashes": {
+        "0": "e52c94a9cc4057ae212d9a85607f0f102afb5bab687af7a3bb60e1e58c1e29d5",
+        "1": "d5398fbfb620984ca7279517345b717dc9533522b13ef79eb5a6678f2fb85234",
+        "2": "467bfb4d3d50c337e1b3c2b035f0b60167b0498270ccc34101285f43a2c40236",
+        "3": "104f8e456a131a7dd23cc4e849ef786c024211c9467aeb9a89c834a31075601d"
+      },
+      "num_unique_hashes": 4,
+      "duplicate_groups": [],
+      "prev_global_path": "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/FL_Experiments/parallel_final/fedavg_12.pt",
+      "prev_global_hash": "84630f4c97194bd115dd09063113d005a57093a8ba14db0fe8f4eb0db2d289c2",
+      "prev_global_matches": {
+        "0": false,
+        "1": false,
+        "2": false,
+        "3": false
+      }
+    },
+    {
+      "round": 14,
+      "site_hashes": {
+        "0": "55b70e8d66c2e70e497e25f82bd6190bd1153b9bb82a9d7be4063ec44beb1d04",
+        "1": "1db484cb59c6189bab9122242a777b7f920852632f93f4e159c8264ec5dbaa3a",
+        "2": "90bde005f2e8fc3b3444c3a88c6f129213a6c98b3428543d9c679647b708d27f",
+        "3": "2349605e21640ab9dc842dfe0e984e3248b09510f73bde5080e468fd4e9dfac2"
+      },
+      "num_unique_hashes": 4,
+      "duplicate_groups": [],
+      "prev_global_path": "/content/drive/MyDrive/MastersStudies_conditional/Generative_Image/FL_Experiments/parallel_final/fedavg_13.pt",
+      "prev_global_hash": "cadc815431adf5b1b48870b80cbcc24b0ab2ce09a75108cbd5e9e8f71c15450e",
+      "prev_global_matches": {
+        "0": false,
+        "1": false,
+        "2": false,
+        "3": false
+      }
+    }
+  ]
+}
