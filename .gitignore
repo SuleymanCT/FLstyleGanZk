@@ -1,0 +1,29 @@
+# Model ağırlıkları ve büyük binary'ler — git'e ASLA girmez
+*.pkl
+*.pt
+*.pth
+*.onnx
+
+# Python ortamı
+venv/
+.venv/
+__pycache__/
+*.pyc
+
+# ezkl artefaktları (devre/anahtar dosyaları — büyük, üretilebilir)
+*.srs
+*.pk
+*.vk
+*.compiled
+ezkl_settings.json
+*_witness.json
+
+# Not: zk_artifacts_results/ altındaki sonuç JSON'ları İSTİSNADIR,
+# bilinçli olarak commit edilir (küçük, taşınabilir deney sonuçları).
+!zk_artifacts_results/
+!zk_artifacts_results/**/*.json
+
+# Editör / OS
+.vscode/
+.idea/
+.DS_Store

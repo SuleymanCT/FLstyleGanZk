@@ -1,0 +1,20 @@
+# ZK devre parametreleri. Şu an hepsi placeholder/null — Faz C
+# (circuits/calibrate.py + scripts/bench_circuit.py) sonunda gerçek
+# değerlerle doldurulacak.
+
+# challenge_size_k: her ispat turunda kaç (z, c) örneğinin devreden
+# geçirileceği. Faz C'de {1, 4, 8} taranacak.
+challenge_size_k: null
+
+# bit_width: ezkl sabit noktalı kuantizasyon bit genişliği.
+# Faz C'de {8, 16} taranacak.
+bit_width: null
+
+# scale: ezkl "scale" parametresi (sabit noktalı ölçek faktörü).
+scale: null
+
+calibration:
+  # method: ezkl calibrate_settings'e verilecek strateji adı (ör. "resources").
+  method: null
+  # target: kalibrasyon hedefi (ör. "resources" / "accuracy").
+  target: null

@@ -1,0 +1,12 @@
+# Python 3.11 hedeflenir. 3.12 KULLANMA: StyleGAN3-r/StyleGAN-XL'in
+# CUDA custom op'ları (upfirdn2d, bias_act, filtered_lrelu) Python 3.12
+# altında derlenmiyor. Colab tarafında da runtime'ı 3.11'e sabitle.
+
+ezkl==23.0.5
+onnx
+onnxruntime
+torch
+numpy
+pyyaml
+web3
+pytest

@@ -1,0 +1,22 @@
+# Ortam seçimi: TEZ_ENV ortam değişkeni "local" veya "colab" olabilir.
+# Ayarlanmamışsa "local" varsayılır. Kod tarafında (storage/paths
+# yükleyicisi, henüz yazılmadı) bu değişkene göre aşağıdaki iki bloktan
+# biri seçilir — YAML'ın kendisi hiçbir koşul çalıştırmaz, sadece iki
+# ortamın yollarını ayrı tutar.
+
+local:
+  # Colab'daki parallel_final klasörünün yerel bir kopyası/sembolik
+  # bağlantısı varsa buraya işaret et; yoksa Faz A çıktıları
+  # (shard'lar, inventory.json) zaten zk_root altında olacağından bu
+  # yerelde çoğu zaman kullanılmaz.
+  raw_root: "./data/raw"
+  zk_root: "./data/zk"
+  shards_dir: "./data/zk/shards"
+  results_dir: "./zk_artifacts_results"
+
+colab:
+  # Drive'daki SALT OKUNUR deney kökü. Hiçbir kod buraya yazmaz/silmez.
+  raw_root: "/content/drive/MyDrive/FL_Experiments/parallel_final"
+  zk_root: "/content/drive/MyDrive/FL_Experiments/zk"
+  shards_dir: "/content/drive/MyDrive/FL_Experiments/zk/shards"
+  results_dir: "/content/zk-fl-stylegan-retina/zk_artifacts_results"

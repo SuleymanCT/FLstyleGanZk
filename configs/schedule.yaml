@@ -1,0 +1,16 @@
+# İspat takvimi ve kabul eşikleri. tau_norm_threshold Faz A'dan
+# (scripts/audit_fedavg.py -> delta_norms.json p50/p90/p99) önce
+# doldurulamaz, bu yüzden şimdilik null.
+
+proof_schedule:
+  # fixed_rounds: her zaman tam ispat istenecek round numaraları (ör. [0, 7, 14]).
+  fixed_rounds: []
+  # random_ratio: sabit turlar dışında, rastgele seçilecek site/round
+  # oranı (0.0-1.0). Kademeli modda kullanılır.
+  random_ratio: null
+  # reputation_threshold: bu eşiğin altına düşen site sonraki turlarda dışlanır.
+  reputation_threshold: null
+
+# tau_norm_threshold: ΔG normunun bu değeri aşması sabotaj şüphesi
+# sayılır. Faz A sonrası delta_norms.json'daki p50/p90/p99'dan seçilecek.
+tau_norm_threshold: null
