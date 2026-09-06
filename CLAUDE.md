@@ -32,10 +32,18 @@ Bu dosya, bu repoda çalışırken uyulması gereken sabit kuralları listeler.
    sahte ispat, sahte metrik uydurulmaz. (Faz B'nin kendisi, tanımı
    gereği, tek istisna olan oyuncak demo fazıdır.)
 
-7. **Ağır işler Colab'da çalışır.** Yerelde GPU eğitimi başlatılmaz,
-   yerelde `.pkl` dosyası (StyleGAN pickle) okunmaz/açılmaz. Yerel
-   ortam sadece CPU işleri (kontratlar, ezkl devreleri, orkestratör,
-   testler) için kullanılır.
+7. **Tüm çalıştırma Colab'da yapılır — yerel ortam sadece kod yazımı ve
+   `pytest` birim testleri içindir.** Yerelde GPU eğitimi başlatılmaz,
+   `.pkl` dosyası (StyleGAN pickle) okunmaz/açılmaz; `ezkl` proving/setup
+   zinciri çalıştırılmaz; `anvil`/`forge` başlatılmaz; gerçek bir zincire/
+   web3 RPC'sine bağlanılmaz. Bunların hepsi Colab'da çalışır
+   (`scripts/setup_colab.sh` + `notebooks/colab_runner.ipynb`). Yerelde
+   bu araçlar (ezkl CLI, anvil, forge, solc) bilerek KURULMAZ
+   (`scripts/setup_local.sh` sadece pytest için gereken Python
+   paketlerini kurar). Bu araçları gerektiren testler (ör.
+   `tests/test_toy_pipeline.py`) araç yoksa **skip** eder — bu bir hata
+   değildir, `pytest` yine de yeşil kalır; sadece Colab'da gerçekten
+   koşar.
 
 8. **Her değişiklikten sonra `pytest` çalıştırılır.** Kırık test
    bırakılmaz; bir değişiklik mevcut bir testi bozuyorsa, ya değişiklik

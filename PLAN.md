@@ -3,6 +3,17 @@
 Altı fazın tanımı ve kabul kriterleri. Her fazın durumu, o faz
 tamamlandığında güncellenir.
 
+## Ortam politikası
+
+Faz B ve sonrası TAMAMEN Colab'da çalışır (Windows'ta foundry/anvil
+kurulumu sancılı olduğundan bu karar değişti). Yerel makine sadece kod
+yazımı ve `pytest` birim testleri için kullanılır — `ezkl` proving,
+`anvil`/`forge`, gerçek zincir/web3 işlemleri hiç yerelde çalışmaz
+(bkz. `CLAUDE.md` madde 7). `scripts/setup_local.sh` bu araçları artık
+kurmuyor; onları gerektiren testler (`tests/test_toy_pipeline.py` gibi)
+yerelde otomatik **skip** olur, Colab'da gerçekten koşar
+(`notebooks/colab_runner.ipynb`, `MODE="toy"`).
+
 ## Ortak altyapı: pathguard
 
 `storage/pathguard.py` (`assert_writable`, `open_readonly`) tüm
@@ -73,15 +84,28 @@ parallel_final/fedavg_0.pt ... fedavg_N.pt
 **Kabul:** `inventory.json` + 60 shard + `delta_norms.json` üretildi,
 fedavg numaralandırması kesinleşti.
 
-## Faz B (yerel) — Oyuncak uçtan uca
+## Faz B (Colab) — Oyuncak uçtan uca
 
 **durum: yapılmadı**
+(kod yazıldı — bkz. `circuits/toy_model.py`, `circuits/ezkl_utils.py`,
+`circuits/toy_pipeline.py`, `chain/anvil.py`, `chain/client.py`,
+`tests/test_toy_pipeline.py`. ezkl çağrı sırası (gen_settings →
+calibrate_settings → compile_circuit → get_srs → setup → gen_witness →
+prove → verify) `tez-projesi/src/zk.py`'deki Colab'da KANITLANMIŞ
+sırayla birebir aynı. EVM kısmı (`create_evm_verifier`,
+`encode_evm_calldata`, anvil deploy, web3 doğrulama) resmi ezkl 23.0.5
+Python binding dokümantasyonuna göre yazıldı ama `ezkl`/`anvil`/`solc`
+yerelde yok — Colab'da HENÜZ koşulmadı, kabul kriteri ancak o koşumdan
+sonra karşılanabilir; EVM adımlarında küçük API düzeltmeleri gerekebilir.
+Saf/testable kısımlar (`ToyMLP`, `chain/anvil.py`'nin metin ayrıştırma
+fonksiyonları) yerelde test edildi, `tests/test_toy_pipeline.py` ezkl/
+anvil/solc yokken otomatik skip olur.)
 
-Bu projedeki TEK demo fazı. Küçük MLP (32->32->8) -> ONNX -> ezkl
-derleme+kalibrasyon -> ispat -> Solidity verifier üretimi -> anvil'de
-deploy -> Python'dan doğrulama. `tests/test_toy_pipeline.py` tek
-komutla yeşil geçsin, adım süreleri ve gas yazsın. anvil'i test
-içinden başlat ve kapat.
+(Artık "yerel" değil "Colab" fazı — bkz. yukarıdaki "Ortam politikası"
+notu.) Küçük MLP (32->32->8) -> ONNX -> ezkl derleme+kalibrasyon ->
+ispat -> Solidity verifier üretimi -> anvil'de deploy -> Python'dan
+doğrulama. `tests/test_toy_pipeline.py` tek komutla yeşil geçsin, adım
+süreleri ve gas yazsın. anvil'i test içinden başlat ve kapat.
 
 **Kabul:** test yeşil, boru hattı çalışıyor. Buradan sonra sahte çıktı
 yok.
