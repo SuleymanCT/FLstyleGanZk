@@ -3,11 +3,15 @@
 ezkl çağrı sırası (gen_settings -> calibrate_settings -> compile_circuit
 -> get_srs -> setup -> gen_witness -> prove -> verify) aynı kullanıcının
 `tez-projesi/src/zk.py` dosyasında `ezkl==23.0.5` ile Colab'da KANITLANMIŞ
-sırayla birebir aynıdır. EVM (create_evm_verifier/encode_evm_calldata)
-kısmı resmi ezkl 23.0.5 Python binding dokümantasyonuna göre yazıldı ama
-gerçek bir Colab koşumuyla henüz doğrulanmadı — bu yüzden her adım ayrı,
-adı açık bir hataya sarılı (bir şey patlarsa TAM olarak hangi adımda
-patladığı görülür).
+sırayla birebir aynıdır. Faz B'nin ilk Colab koşumunda TÜM ZK adımları
+(setup 9.1s, prove 13.5s, offchain verify 0.04s) geçti; tek hata EVM
+adımında çıktı: `create_evm_verifier` de (get_srs gibi) coroutine
+döndürüyor ama senkron çağrılmıştı ("RuntimeError: no running event
+loop"). Bu yüzden HER ezkl çağrısı artık `circuits.ezkl_utils.run_async`
+üzerinden geçiyor — hangi ezkl fonksiyonunun async olduğu sürümden
+sürüme değişebildiği için (`get_srs` hep öyleydi, `create_evm_verifier`
+23.0.5'te de öyle çıktı), bu sarmalayıcı sync/async ayrımını ÖNCEDEN
+varsaymıyor, çalışma zamanında `inspect.isawaitable` ile kontrol ediyor.
 
 BİLİNÇLİ TEST SINIRI: `ezkl`, `solc`, `anvil` gerektirir. Yerelde hiçbiri
 yok — bu modül yerelde import bile edilemez (`import ezkl` başarısız
@@ -27,7 +31,7 @@ import torch
 
 from chain.anvil import AnvilProcess
 from chain.client import Web3Client
-from circuits.ezkl_utils import run_get_srs
+from circuits.ezkl_utils import run_async, run_get_srs
 
 INPUT_VISIBILITY = "private"
 PARAM_VISIBILITY = "fixed"  # ezkl'de "public" artık desteklenmiyor (deprecated)
@@ -74,23 +78,23 @@ def run_ezkl_setup(onnx_path: Path, input_json_path: Path, work_dir: Path) -> di
     run_args.output_visibility = OUTPUT_VISIBILITY
 
     print("[toy_pipeline]  gen_settings...")
-    ok = ezkl.gen_settings(str(onnx_path), str(paths["settings"]), py_run_args=run_args)
+    ok = run_async(ezkl.gen_settings, str(onnx_path), str(paths["settings"]), py_run_args=run_args)
     if ok is not True:
         raise RuntimeError(f"gen_settings True döndürmedi: {ok!r}")
 
     print("[toy_pipeline]  calibrate_settings (target=resources)...")
-    ezkl.calibrate_settings(str(input_json_path), str(onnx_path), str(paths["settings"]), "resources")
+    run_async(ezkl.calibrate_settings, str(input_json_path), str(onnx_path), str(paths["settings"]), "resources")
 
     print("[toy_pipeline]  compile_circuit...")
-    ok = ezkl.compile_circuit(str(onnx_path), str(paths["compiled"]), str(paths["settings"]))
+    ok = run_async(ezkl.compile_circuit, str(onnx_path), str(paths["compiled"]), str(paths["settings"]))
     if ok is not True:
         raise RuntimeError(f"compile_circuit True döndürmedi: {ok!r}")
 
-    print("[toy_pipeline]  get_srs (async)...")
+    print("[toy_pipeline]  get_srs...")
     run_get_srs(str(paths["settings"]))
 
     print("[toy_pipeline]  setup (pk/vk üretiliyor)...")
-    ok = ezkl.setup(str(paths["compiled"]), str(paths["vk"]), str(paths["pk"]))
+    ok = run_async(ezkl.setup, str(paths["compiled"]), str(paths["vk"]), str(paths["pk"]))
     if ok is not True:
         raise RuntimeError(f"setup True döndürmedi: {ok!r}")
 
@@ -106,12 +110,12 @@ def run_prove(input_json_path: Path, paths: dict, work_dir: Path) -> Path:
     proof_path = work_dir / "proof.json"
 
     print("[toy_pipeline]  gen_witness...")
-    ezkl.gen_witness(str(input_json_path), str(paths["compiled"]), str(witness_path))
+    run_async(ezkl.gen_witness, str(input_json_path), str(paths["compiled"]), str(witness_path))
     if not witness_path.exists():
         raise RuntimeError(f"gen_witness sonrası witness dosyası yok: {witness_path}")
 
     print("[toy_pipeline]  prove...")
-    ezkl.prove(str(witness_path), str(paths["compiled"]), str(paths["pk"]), str(proof_path))
+    run_async(ezkl.prove, str(witness_path), str(paths["compiled"]), str(paths["pk"]), str(proof_path))
     if not proof_path.exists():
         raise RuntimeError(f"prove sonrası proof dosyası yok: {proof_path}")
 
@@ -119,13 +123,13 @@ def run_prove(input_json_path: Path, paths: dict, work_dir: Path) -> Path:
 
 
 def run_verify(proof_path: Path, paths: dict) -> bool:
-    return bool(ezkl.verify(str(proof_path), str(paths["settings"]), str(paths["vk"])))
+    return bool(run_async(ezkl.verify, str(proof_path), str(paths["settings"]), str(paths["vk"])))
 
 
 def generate_solidity_verifier(paths: dict, work_dir: Path) -> tuple[Path, Path]:
     sol_path = work_dir / "Verifier.sol"
     abi_path = work_dir / "Verifier.abi"
-    ezkl.create_evm_verifier(str(paths["vk"]), str(paths["settings"]), str(sol_path), str(abi_path))
+    run_async(ezkl.create_evm_verifier, str(paths["vk"]), str(paths["settings"]), str(sol_path), str(abi_path))
     if not sol_path.exists():
         raise RuntimeError(f"create_evm_verifier sonrası .sol dosyası yok: {sol_path}")
     return sol_path, abi_path
@@ -169,7 +173,7 @@ def deploy_and_verify_onchain(bytecode: bytes, proof_path: Path, work_dir: Path,
 
     calldata_path = work_dir / "calldata.bin"
     print("[toy_pipeline]  encode_evm_calldata...")
-    ezkl.encode_evm_calldata(str(proof_path), str(calldata_path))
+    run_async(ezkl.encode_evm_calldata, str(proof_path), str(calldata_path))
     if not calldata_path.exists():
         raise RuntimeError(f"encode_evm_calldata sonrası calldata dosyası yok: {calldata_path}")
     calldata = calldata_path.read_bytes()

@@ -95,11 +95,24 @@ prove → verify) `tez-projesi/src/zk.py`'deki Colab'da KANITLANMIŞ
 sırayla birebir aynı. EVM kısmı (`create_evm_verifier`,
 `encode_evm_calldata`, anvil deploy, web3 doğrulama) resmi ezkl 23.0.5
 Python binding dokümantasyonuna göre yazıldı ama `ezkl`/`anvil`/`solc`
-yerelde yok — Colab'da HENÜZ koşulmadı, kabul kriteri ancak o koşumdan
-sonra karşılanabilir; EVM adımlarında küçük API düzeltmeleri gerekebilir.
-Saf/testable kısımlar (`ToyMLP`, `chain/anvil.py`'nin metin ayrıştırma
-fonksiyonları) yerelde test edildi, `tests/test_toy_pipeline.py` ezkl/
-anvil/solc yokken otomatik skip olur.)
+yerelde yok — kabul kriteri ancak Colab'da tam koşumdan sonra
+karşılanabilir. Saf/testable kısımlar (`ToyMLP`, `chain/anvil.py`'nin
+metin ayrıştırma fonksiyonları, `circuits/ezkl_utils.run_async`)
+yerelde test edildi, `tests/test_toy_pipeline.py` ezkl/anvil/solc
+yokken otomatik skip olur.
+
+**İlk Colab koşumu (1. tur):** ZK adımlarının hepsi geçti (setup 9.1s,
+prove 13.5s, offchain verify 0.04s). Tek hata `generate_solidity_verifier`da
+— `ezkl.create_evm_verifier` de (`get_srs` gibi) coroutine döndürüyor
+ama senkron çağrılmıştı ("RuntimeError: no running event loop").
+Düzeltildi: `circuits/ezkl_utils.run_async` genelleştirildi (artık tek
+bir ezkl fonksiyonuna özel değil, HERHANGİ bir ezkl çağrısını —
+sonucunun `inspect.isawaitable` olup olmadığına çalışma zamanında
+bakarak — event loop içinde çalıştırıyor), `toy_pipeline.py`'deki TÜM
+ezkl çağrıları (`gen_settings`, `calibrate_settings`, `compile_circuit`,
+`setup`, `gen_witness`, `prove`, `verify`, `create_evm_verifier`,
+`encode_evm_calldata`) bunun üzerinden geçiyor. EVM/deploy adımları
+(6-8) hâlâ Colab'da doğrulanmadı — bir sonraki koşum turu bekleniyor.)
 
 (Artık "yerel" değil "Colab" fazı — bkz. yukarıdaki "Ortam politikası"
 notu.) Küçük MLP (32->32->8) -> ONNX -> ezkl derleme+kalibrasyon ->
@@ -130,6 +143,25 @@ yok.
 
 **Kabul:** en az bir (k, bit) kombinasyonu 30 dk altında ispat
 üretiyor.
+
+**Faz B'den not (C3/C4 için girdi):** Oyuncak MLP'nin (32→32→8, ezkl
+varsayılan `calibrate_settings(..., "resources")` ile otomatik
+scale/logrows seçimi — muhtemelen `input_scale=13`, `param_scale=13`)
+ilk Colab koşumunda `gen_witness`/`prove` sırasında "decomposition
+error: integer ... is too large" tipi UYARILAR görüldü (fatal değil —
+Numerical Fidelity Report `max_abs_error=0.00033` ile ispat yine de
+geçti). Bunlar muhtemelen bazı ara toplamların (Linear katmanının
+32 terimlik iç çarpımı gibi) o scale'de seçilen decomposition/lookup
+aralığını an be an aşıp ezkl'in otomatik olarak birden fazla parçaya
+("leg") bölmesinden kaynaklanıyor — fonksiyonel bir hata değil ama
+sınıra ne kadar yakın çalışıldığının işareti. Gerçek mapping ağı
+(`mapping.fc1`: 512 terimlik iç çarpımlar, ~16x daha fazla terim)
+aynı scale'de bu sınıra DAHA yakın ya da onu AŞAN davranış gösterebilir.
+C3'ün (k, bit) taramasında bu uyarıların sıklığı/varlığı ve
+`max_abs_error`'un k/bit'e göre nasıl değiştiği de kısıt sayısı/süre
+yanında AYRI bir sütun olarak kaydedilmeli — düşük `bit_width` (8)
+gerçek ağda bu uyarıları fatal hataya (ya da sessiz hassasiyet kaybına)
+çevirebilir, `bit_width=16` daha güvenli başlangıç noktası olabilir.
 
 ## Faz D (yerel) — Kontratlar ve orkestratör
 
