@@ -19,8 +19,11 @@ from scripts.bench_circuit import (
     build_grid,
     build_multi_input_json,
     classify_exception_status,
+    cleanup_work_dir,
     combo_key,
+    compute_dir_size_bytes,
     count_decomposition_warnings,
+    default_work_root,
     extract_circuit_stats,
     extract_max_abs_error,
     load_bench_results,
@@ -126,6 +129,52 @@ def test_classify_exception_status_returns_failed_for_normal_exceptions():
     assert classify_exception_status(RuntimeError("boom")) == "failed"
 
 
+def test_default_work_root_returns_nonempty_local_path():
+    root = default_work_root()
+    assert isinstance(root, str) and root
+    assert "zk_bench_work" in root
+
+
+def test_compute_dir_size_bytes_sums_all_files(tmp_path):
+    (tmp_path / "a.bin").write_bytes(b"x" * 100)
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "b.bin").write_bytes(b"y" * 250)
+    assert compute_dir_size_bytes(tmp_path) == 350
+
+
+def test_cleanup_work_dir_deletes_only_configured_large_files(tmp_path):
+    (tmp_path / "pk.key").write_bytes(b"p" * 1000)
+    (tmp_path / "network.compiled").write_bytes(b"c" * 500)
+    (tmp_path / "witness.json").write_bytes(b"w" * 200)
+    (tmp_path / "settings.json").write_bytes(b"{}")
+    (tmp_path / "proof.json").write_bytes(b"{}")
+
+    result = cleanup_work_dir(tmp_path, keep_artifacts=False)
+
+    assert not (tmp_path / "pk.key").exists()
+    assert not (tmp_path / "network.compiled").exists()
+    assert not (tmp_path / "witness.json").exists()
+    assert (tmp_path / "settings.json").exists()
+    assert (tmp_path / "proof.json").exists()
+    assert set(result["cleaned_up_files"]) == {"pk.key", "network.compiled", "witness.json"}
+    assert result["disk_usage_before_cleanup_bytes"] == 1704  # 1000+500+200+2+2
+    assert result["disk_usage_after_cleanup_bytes"] == 4
+    assert result["disk_usage_freed_bytes"] == 1700
+    assert result["keep_artifacts"] is False
+
+
+def test_cleanup_work_dir_keeps_everything_when_keep_artifacts_true(tmp_path):
+    (tmp_path / "pk.key").write_bytes(b"p" * 1000)
+
+    result = cleanup_work_dir(tmp_path, keep_artifacts=True)
+
+    assert (tmp_path / "pk.key").exists()
+    assert result["cleaned_up_files"] == []
+    assert result["disk_usage_freed_bytes"] == 0
+    assert result["keep_artifacts"] is True
+
+
 def test_build_multi_input_json_shapes_match_flattened_tensors():
     z = torch.arange(6, dtype=torch.float32).reshape(2, 3)
     c = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
@@ -166,6 +215,8 @@ def test_render_markdown_table_contains_header_and_rows():
             "decomposition_warning_count": 3,
             "max_abs_error": 0.133,
             "max_abs_error_relative_pct": 12.5,
+            "disk_usage_before_cleanup_bytes": 2_600_000_000,
+            "disk_usage_after_cleanup_bytes": 50_000,
             "deployed_bytecode_size": 15000,
             "exceeds_eip170": False,
             "verify_gas": 250000,
@@ -176,8 +227,10 @@ def test_render_markdown_table_contains_header_and_rows():
     table = render_markdown_table(results)
     assert "kombinasyon" in table
     assert "gerceklesen_scale" in table
+    assert "disk_oncesi(MB)" in table and "disk_sonrasi(MB)" in table
     assert "k1_matmul_scale8" in table
     assert "k1_matmul_scale11" in table
     assert "RuntimeError: patladi" in table
     assert "success" in table and "failed" in table and "panic" in table
     assert "12.5" in table
+    assert "2600" in table  # disk_oncesi(MB), 2.6GB -> ~2600 MB

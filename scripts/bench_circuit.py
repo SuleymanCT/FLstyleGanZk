@@ -87,6 +87,38 @@ işaretlenir (sıradan `"failed"`'den ayrı — hangi kombinasyonların
 ezkl'i gerçekten ÇÖKERTTİĞÜ, hangilerinin sadece normal bir hata
 döndürdüğü karışmasın).
 
+## Disk yönetimi: work_dir yerel diskte, sonuçlar Drive'da
+
+İlk gerçek Colab koşumunda `pk.key` **2.5 GB** çıktı — 30 kombinasyonluk
+tam ızgarada Drive kotasını doldurur. İki önlem alındı:
+1. **Varsayılan çalışma kökü artık `/content` (Colab'ın yerel VM diski,
+   Drive DEĞİL) altında** (`default_work_root()`), `--work-root` ile
+   değiştirilebilir. Sadece küçük sonuç dosyaları (`{key}.json`,
+   `{key}.log.txt`, `bench_results.json`) `--bench-dir`'e (varsayılan
+   `{zk_root}/bench`, Drive) yazılıyor — büyük ara dosyalar (pk,
+   derlenmiş devre, witness, settings, proof, Verifier.sol) hiç Drive'a
+   gitmiyor.
+2. Worker, ölçümleri (pk/vk boyutu dahil) `result.json`'a kaydettikten
+   SONRA `cleanup_work_dir` ile büyük ara dosyaları (`pk.key`,
+   `network.compiled`, `witness.json`) siler — boyutları zaten kayıtlı
+   olduğundan dosyanın kalmasına gerek yok. `settings.json`/`proof.json`/
+   `Verifier.sol`/`.abi`/`vk.key`/`input.json` KORUNUR (küçük, tekrar
+   üretimi pahalı/gereksiz). `--keep-artifacts` verilirse HİÇBİR ŞEY
+   silinmez (elle inceleme için). Her kombinasyondan sonra
+   temizlik-öncesi/sonrası disk kullanımı loglanır ve `result.json`'a
+   (`disk_usage_before_cleanup_bytes`/`_after_cleanup_bytes`/`_freed_bytes`)
+   yazılır.
+
+**NOT — SRS dosyası bu temizlik listesinde YOK:** `circuits/ezkl_utils.py:
+run_get_srs` ve `run_ezkl_pipeline`/`run_prove_and_verify`'deki `setup`/
+`gen_witness`/`prove` çağrıları `srs_path` argümanını hiç VERMİYOR
+(`None` — ezkl.pyi'de `get_srs(settings_path, logrows, srs_path)` /
+`setup(..., srs_path, ...)` şeklinde hepsi opsiyonel). Bu yüzden SRS
+dosyası bizim `work_dir`'imize HİÇ yazılmıyor — ezkl kendi varsayılan
+önbelleğini (VM'nin yerel diskinde, Drive'a gitmiyor) kullanıyor ve
+AYNI `logrows` değerine sahip kombinasyonlar arasında PAYLAŞILIYOR
+(yeniden üretilmiyor) — zaten bir sorun değil, silinecek bir şey yok.
+
 BİLİNÇLİ TEST SINIRI: `run_ezkl_pipeline`/`run_prove_and_verify`/`run_worker`
 ve zincir/solc adımları `ezkl`+`anvil`+`solc`+`web3` gerektirir, SADECE
 Colab'da çalışır/test edilir (bu yüzden `ezkl`/zincire dokunan modüller
@@ -113,6 +145,7 @@ import re
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 from pathlib import Path
@@ -141,6 +174,12 @@ DEFAULT_TIMEOUT_SECONDS = 1800.0
 INPUT_VISIBILITY = "private"
 PARAM_VISIBILITY = "fixed"
 OUTPUT_VISIBILITY = "public"
+
+# Colab'da gercek mapping devresinde pk.key 2.5 GB cikti - boyutlari zaten
+# result.json'a kaydedildiginden dosyanin kendisi gereksiz, 30 kombinasyonluk
+# tam izgarada Drive kotasini doldurur. SRS burada YOK - work_dir'e hic
+# yazilmiyor (bkz. modul docstring'i "Disk yonetimi" bolumu).
+CLEANUP_DELETE_FILENAMES = ("pk.key", "network.compiled", "witness.json")
 
 _MAX_ABS_ERROR_RE = re.compile(r"max_abs_error[\"']?\s*[:=]\s*([0-9]*\.?[0-9]+(?:[eE][+-]?[0-9]+)?)")
 _CIRCUIT_STAT_TOP_LEVEL_KEYS = ("num_rows", "num_constraints", "total_assignments")
@@ -271,6 +310,59 @@ def measure_peak_rss_kb() -> int | None:
     return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
 
 
+def default_work_root() -> str:
+    """Kombinasyon başına ezkl ara dosyalarının (pk/vk/derlenmiş devre/witness)
+    yazılacağı varsayılan kök. `/content` varsa (Colab) ORAYA — VM'nin yerel
+    diski, Drive DEĞİL, hem daha hızlı hem kota yemiyor. Yoksa (yerel/Windows,
+    zaten ezkl çalışmıyor) sistem temp dizini — sadece `--help`/saf-fonksiyon
+    testlerinin bir varsayılan değere ihtiyacı var, path'in var olması gerekmez."""
+    if os.path.isdir("/content"):
+        return "/content/zk_bench_work"
+    return os.path.join(tempfile.gettempdir(), "zk_bench_work")
+
+
+def compute_dir_size_bytes(path) -> int:
+    total = 0
+    for root, _dirs, files in os.walk(path):
+        for name in files:
+            file_path = os.path.join(root, name)
+            try:
+                total += os.path.getsize(file_path)
+            except OSError:
+                pass
+    return total
+
+
+def cleanup_work_dir(work_dir: Path, keep_artifacts: bool) -> dict:
+    """`work_dir`'deki BÜYÜK ara dosyaları (`CLEANUP_DELETE_FILENAMES`) siler
+    — boyutları zaten `result.json`'a kaydedildiğinden dosyanın kendisine
+    ihtiyaç yok. `settings.json`/`proof.json`/`Verifier.sol`/`.abi`/`vk.key`/
+    `input.json` DOKUNULMAZ (silme listesinde YOK, örtük olarak korunur).
+    `keep_artifacts=True` ise HİÇBİR ŞEY silinmez (elle inceleme için)."""
+    before = compute_dir_size_bytes(work_dir)
+    deleted_files: list[str] = []
+    if not keep_artifacts:
+        for name in CLEANUP_DELETE_FILENAMES:
+            file_path = Path(work_dir) / name
+            if file_path.is_file():
+                size = file_path.stat().st_size
+                file_path.unlink()
+                deleted_files.append(name)
+                print(f"[bench_circuit]  Silindi: {file_path} ({size / 1e6:.1f} MB)")
+    after = compute_dir_size_bytes(work_dir)
+    print(
+        f"[bench_circuit]  Disk kullanımı ({work_dir}): {before / 1e6:.1f} MB -> {after / 1e6:.1f} MB "
+        f"(silinen: {(before - after) / 1e6:.1f} MB, keep_artifacts={keep_artifacts})"
+    )
+    return {
+        "disk_usage_before_cleanup_bytes": before,
+        "disk_usage_after_cleanup_bytes": after,
+        "disk_usage_freed_bytes": before - after,
+        "cleaned_up_files": deleted_files,
+        "keep_artifacts": keep_artifacts,
+    }
+
+
 def _cell(value) -> str:
     if value is None:
         return "-"
@@ -285,8 +377,8 @@ def render_markdown_table(results: dict) -> str:
     headers = [
         "kombinasyon", "durum", "gerceklesen_scale", "gen_settings+calibrate(s)", "compile(s)", "setup(s)",
         "gen_witness(s)", "prove(s)", "verify_offchain(s)", "proof(B)", "pk(B)", "vk(B)",
-        "tepe_RAM(KB)", "decomposition_uyari", "max_abs_error", "max_abs_error_%", "deployed_bytecode(B)",
-        "EIP170_asiyor", "verify_gas", "hata",
+        "tepe_RAM(KB)", "decomposition_uyari", "max_abs_error", "max_abs_error_%", "disk_oncesi(MB)", "disk_sonrasi(MB)",
+        "deployed_bytecode(B)", "EIP170_asiyor", "verify_gas", "hata",
     ]
     lines = ["| " + " | ".join(headers) + " |", "|" + "|".join(["---"] * len(headers)) + "|"]
 
@@ -313,6 +405,8 @@ def render_markdown_table(results: dict) -> str:
             _cell(r.get("decomposition_warning_count")),
             _cell(r.get("max_abs_error")),
             _cell(r.get("max_abs_error_relative_pct")),
+            _cell(round(r["disk_usage_before_cleanup_bytes"] / 1e6, 1) if r.get("disk_usage_before_cleanup_bytes") is not None else None),
+            _cell(round(r["disk_usage_after_cleanup_bytes"] / 1e6, 1) if r.get("disk_usage_after_cleanup_bytes") is not None else None),
             _cell(r.get("deployed_bytecode_size")),
             _cell(r.get("exceeds_eip170")),
             _cell(r.get("verify_gas")),
@@ -532,6 +626,9 @@ def run_worker(args: argparse.Namespace) -> int:
     finally:
         result["total_wall_seconds"] = time.perf_counter() - t_start
         result["peak_rss_kb"] = measure_peak_rss_kb()
+        # Boyutlar (pk/vk/proof) yukarıda zaten result'a kaydedildi - dosyaların
+        # kendisine artık ihtiyaç yok, büyük olanları burada temizliyoruz.
+        result.update(cleanup_work_dir(work_dir, keep_artifacts=args.keep_artifacts))
         write_json_file(result, args.result_out)
         print(f"[bench_circuit] Sonuç yazıldı: {args.result_out}")
         gc.collect()
@@ -539,12 +636,14 @@ def run_worker(args: argparse.Namespace) -> int:
     return 0 if result["status"] == "success" else 1
 
 
-def run_combo_in_subprocess(combo: dict, onnx_dir: str, reference_dir: str, bench_dir: Path, timeout: float) -> dict:
+def run_combo_in_subprocess(
+    combo: dict, onnx_dir: str, reference_dir: str, work_root: Path, results_root: Path, timeout: float, keep_artifacts: bool
+) -> dict:
     key = combo_key(combo)
-    combo_work_dir = bench_dir / "work" / key
+    combo_work_dir = work_root / key
     combo_work_dir.mkdir(parents=True, exist_ok=True)
-    result_path = combo_work_dir / "result.json"
-    log_path = combo_work_dir / "log.txt"
+    result_path = results_root / f"{key}.json"
+    log_path = results_root / f"{key}.log.txt"
 
     cmd = [
         sys.executable, "-m", "scripts.bench_circuit", "--worker",
@@ -552,6 +651,8 @@ def run_combo_in_subprocess(combo: dict, onnx_dir: str, reference_dir: str, benc
         "--onnx-dir", onnx_dir, "--reference-dir", reference_dir,
         "--work-dir", str(combo_work_dir), "--result-out", str(result_path),
     ]
+    if keep_artifacts:
+        cmd.append("--keep-artifacts")
     print(f"\n=== Kombinasyon: {key} (timeout={timeout}s) ===")
     print(f"[bench_circuit] Komut: {' '.join(cmd)}")
 
@@ -621,7 +722,12 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--paths-config", default="configs/paths.yaml")
     parser.add_argument("--onnx-dir", default=None, help="varsayılan: {zk_root}/circuits")
     parser.add_argument("--reference-dir", default=None, help="varsayılan: {zk_root}/reference")
-    parser.add_argument("--bench-dir", default=None, help="varsayılan: {zk_root}/bench")
+    parser.add_argument("--bench-dir", default=None, help="varsayılan: {zk_root}/bench (Drive) — SADECE küçük sonuç dosyaları (result json'ları, bench_results.json)")
+    parser.add_argument(
+        "--work-root", default=None,
+        help="varsayılan: /content/zk_bench_work (Colab, yerel disk) ya da sistem temp — BÜYÜK ezkl ara dosyaları (pk/vk/witness/settings) buraya",
+    )
+    parser.add_argument("--keep-artifacts", action="store_true", help="büyük ara dosyaları (pk/compiled/witness) silme, work_root'ta bırak")
     parser.add_argument("--markdown-out", default="docs/phase_c_bench.md")
     parser.add_argument("--k-values", default=",".join(str(k) for k in DEFAULT_K_VALUES))
     parser.add_argument("--embed-modes", default=",".join(DEFAULT_EMBED_MODES))
@@ -649,6 +755,7 @@ def main(argv=None) -> int:
     onnx_dir = args.onnx_dir or os.path.join(paths["zk_root"], "circuits")
     reference_dir = args.reference_dir or os.path.join(paths["zk_root"], "reference")
     bench_dir = Path(args.bench_dir or os.path.join(paths["zk_root"], "bench"))
+    work_root = Path(args.work_root or default_work_root())
 
     k_values = parse_k_values(args.k_values)
     embed_modes = [m.strip() for m in args.embed_modes.split(",") if m.strip()]
@@ -656,12 +763,18 @@ def main(argv=None) -> int:
 
     print(f"[bench_circuit] onnx_dir={onnx_dir}")
     print(f"[bench_circuit] reference_dir={reference_dir}")
-    print(f"[bench_circuit] bench_dir={bench_dir}")
+    print(f"[bench_circuit] bench_dir={bench_dir} (KÜÇÜK sonuç dosyaları — Drive)")
+    print(f"[bench_circuit] work_root={work_root} (BÜYÜK ara dosyalar — yerel disk, --keep-artifacts yoksa her kombinasyon sonrası temizlenir)")
     print(f"[bench_circuit] k_values={k_values} embed_modes={embed_modes} scales={scales}")
-    print(f"[bench_circuit] timeout={args.timeout}s only_first={args.only_first} force={args.force}")
+    print(f"[bench_circuit] timeout={args.timeout}s only_first={args.only_first} force={args.force} keep_artifacts={args.keep_artifacts}")
 
     assert_writable(str(bench_dir))
     bench_dir.mkdir(parents=True, exist_ok=True)
+    results_root = bench_dir / "results"
+    results_root.mkdir(parents=True, exist_ok=True)
+
+    assert_writable(str(work_root))
+    work_root.mkdir(parents=True, exist_ok=True)
 
     grid = build_grid(k_values, embed_modes, scales, only_first=args.only_first)
     print(f"[bench_circuit] Izgara: {len(grid)} kombinasyon")
@@ -677,14 +790,15 @@ def main(argv=None) -> int:
             print(f"\n[bench_circuit] '{key}' zaten sonuçlandırılmış (durum={all_results[key].get('status')}), atlanıyor (--force ile yeniden çalıştır).")
             continue
 
-        result = run_combo_in_subprocess(combo, onnx_dir, reference_dir, bench_dir, args.timeout)
+        result = run_combo_in_subprocess(combo, onnx_dir, reference_dir, work_root, results_root, args.timeout, args.keep_artifacts)
         all_results[key] = result
         save_bench_results(all_results, results_path)
 
         print(
             f"[bench_circuit] '{key}' bitti: durum={result['status']} "
             f"decomposition_uyari={result.get('decomposition_warning_count')} "
-            f"tepe_RAM_KB={result.get('peak_rss_kb')}"
+            f"tepe_RAM_KB={result.get('peak_rss_kb')} "
+            f"disk_sonrasi_MB={(result.get('disk_usage_after_cleanup_bytes') or 0) / 1e6:.1f}"
         )
         if result["status"] != "success":
             print(f"[bench_circuit]   hata: {result.get('error_summary')}")

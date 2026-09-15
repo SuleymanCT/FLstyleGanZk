@@ -417,6 +417,25 @@ sahte çıktı yok.
      (scale=8'de ~%12,5) olarak da raporluyor — scale/fidelity ödünleşim
      tablosu makale için hazır hale geldi.
 
+  **Disk kotası sorunu (Colab, ÇÖZÜLDÜ):** ilk gerçek kombinasyon geçti
+  ama `pk.key` **2,5 GB** çıktı — 30 kombinasyonluk tam ızgarada Drive
+  kotasını doldururdu. İki önlem: (1) çalışma kökü artık varsayılan
+  olarak **`/content`** altında (Colab'ın yerel VM diski, Drive DEĞİL,
+  `default_work_root()`, `--work-root` ile değiştirilebilir) — sadece
+  küçük sonuç dosyaları (`bench/results/{key}.json`, `.log.txt`,
+  `bench_results.json`) `--bench-dir`'e (Drive) yazılıyor. (2) Worker,
+  ölçümleri kaydettikten SONRA `cleanup_work_dir` ile büyük ara
+  dosyaları (`pk.key`, `network.compiled`, `witness.json`) siliyor —
+  boyutları zaten `result.json`'da. `settings.json`/`proof.json`/
+  `Verifier.sol`/`vk.key`/`input.json` korunuyor. `--keep-artifacts`
+  ile temizlik tamamen kapatılabiliyor. Her kombinasyon sonrası
+  temizlik öncesi/sonrası disk kullanımı loglanıp `result.json`'a
+  (`disk_usage_before/after/freed_cleanup_bytes`) yazılıyor —
+  `render_markdown_table`'a `disk_oncesi(MB)`/`disk_sonrasi(MB)`
+  sütunları eklendi. NOT: SRS dosyası bu temizlikte YOK — `srs_path`
+  hiç verilmediğinden (`None`) ezkl kendi varsayılan önbelleğini
+  kullanıyor, work_dir'e hiç yazılmıyor, zaten Drive'a gitmiyor.
+
 - **C4** Kuantizasyon etkisi: w_q ve fp32 w arasında kosinüs benzerliği
   ve L2 farkı, DR sınıfı başına ayrı.
 
