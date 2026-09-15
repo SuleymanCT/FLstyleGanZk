@@ -358,6 +358,37 @@ sahte çıktı yok.
   Çıktı: `{zk_root}/bench/bench_results.json` + konsol tablosu +
   `docs/phase_c_bench.md` (markdown tablo, aynı `render_markdown_table`
   fonksiyonuyla üretiliyor — DRY).
+
+  **Colab sonucu (1. deneme, `--only-first`):** ilk kombinasyon (k=1,
+  matmul, scale=8) `calibrate_settings`'te düştü: `RuntimeError: Failed
+  to calibrate settings: [Uncategorized] calibration failed, could not
+  find any suitable parameters given the calibration dataset` (tepe RAM
+  945 MB, decomposition uyarısı 0). İki olası sebep var: (a) scale=8 dar,
+  (b) çoklu-girdi `input.json` şeması yanlış. **`scripts/diagnose_calibration.py`**
+  yazıldı — önce (b)'yi ele alıyor: `ezkl==23.0.5` (`v23.0.5` etiketi,
+  WebFetch ile GERÇEKTEN çekildi, versiyon kayması riski yok) kaynağından
+  doğrulandı: `src/graph/input.rs`'teki `DataSource = Vec<Vec<FileSourceInner>>`
+  bizim `{"input_data": [flat_z, flat_c]}` şemamızı destekliyor GİBİ
+  görünüyor; ayrıca `ezkl.pyi`'de `calibrate_settings`'in `scales: Optional[Sequence[int]]`
+  ve `max_logrows: Optional[int]` parametrelerinin GERÇEKTEN var olduğu
+  görüldü — `bench_circuit.py`'nin şu anki `force_settings_scale`
+  (calibrate SONRASI settings.json'u elle yamama) yaklaşımı yerine
+  doğrudan `scales=[scale]` verilebilir olabilir. Script hem bunu hem
+  eski yöntemi (`run_args.input_scale`) ampirik olarak karşılaştırıyor
+  (scale×target×yöntem ızgarası + `max_logrows` taraması), hem şema/
+  şekil/değer aralığını gerçek verilerle gözle doğruluyor (ONNX grafiğinin
+  girdi şekli vs input.json uzunluğu çapraz kontrolü, z/c/w gerçek min/
+  max/mean), hem de kalibrasyonu TAMAMEN atlayıp sabit scale ile
+  compile→setup→witness→prove'u dener (kalibrasyon şart mı sorusu).
+  Sonuçlar `{zk_root}/bench/diagnose/diagnose_report.json`'a yazılıyor.
+  Saf yardımcılar (`describe_tensor_stats`, `describe_input_json_shape`,
+  `read_onnx_input_shapes`, `cross_check_input_shapes`, `parse_max_logrows_values`,
+  tablo yazıcılar) yerelde 11 testle GERÇEKTEN doğrulandı; ezkl'e dokunan
+  kısımlar (`dump_full_settings`/`attempt_calibration`/`attempt_skip_calibration`)
+  BİLİNÇLİ TEST SINIRI içinde, sadece Colab'da koşacak. `bench_circuit.py`'nin
+  kendisi bu turda DEĞİŞTİRİLMEDİ — teşhis sonucu gelene kadar bilerek
+  ertelendi.
+
 - **C4** Kuantizasyon etkisi: w_q ve fp32 w arasında kosinüs benzerliği
   ve L2 farkı, DR sınıfı başına ayrı.
 
