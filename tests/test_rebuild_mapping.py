@@ -15,7 +15,9 @@ import torch.nn.functional as F
 from circuits.rebuild_mapping import (
     IGNORED_SHARD_KEYS,
     build_mapping_network_from_shard,
+    build_pruned_mapping_network,
     infer_dims_from_shard,
+    verify_prunable_embed_rows,
 )
 
 Z_DIM = 4
@@ -126,3 +128,51 @@ def test_build_mapping_network_raises_on_shape_mismatch():
     shard["mapping.fc1.bias"] = torch.randn(W_DIM + 1)  # forward'a girmez ama sekil uyusmamali... use infer path
     with pytest.raises(ValueError):
         build_mapping_network_from_shard(shard)
+
+
+def test_verify_prunable_embed_rows_accepts_in_range_indices():
+    c = F.one_hot(torch.tensor([0, 1, 2, 0]), num_classes=C_DIM).to(torch.float32)
+    used = verify_prunable_embed_rows([c], num_classes=C_DIM)
+    assert used == {0, 1, 2}
+
+
+def test_verify_prunable_embed_rows_rejects_wrong_width():
+    c_wrong_width = torch.zeros(4, C_DIM + 1)
+    with pytest.raises(ValueError, match="şekli"):
+        verify_prunable_embed_rows([c_wrong_width], num_classes=C_DIM)
+
+
+def test_verify_prunable_embed_rows_multiple_tensors_union():
+    c1 = F.one_hot(torch.tensor([0]), num_classes=C_DIM).to(torch.float32)
+    c2 = F.one_hot(torch.tensor([2]), num_classes=C_DIM).to(torch.float32)
+    used = verify_prunable_embed_rows([c1, c2], num_classes=C_DIM)
+    assert used == {0, 2}
+
+
+def test_build_pruned_mapping_network_matches_full_network_exactly():
+    shard = _make_fake_shard(seed=99)
+    full_model = build_mapping_network_from_shard(shard)
+    full_model.eval()
+
+    pruned_model = build_pruned_mapping_network(shard, num_classes=C_DIM)
+    pruned_model.eval()
+
+    assert pruned_model.embed.weight.shape == (C_DIM, EMBED_DIM)
+
+    torch.manual_seed(3)
+    k = 4
+    z = torch.randn(k, Z_DIM)
+    class_indices = torch.tensor([0, 1, 2, 0])
+    c = F.one_hot(class_indices, num_classes=C_DIM).to(torch.float32)
+
+    with torch.no_grad():
+        full_output = full_model(z, c)
+        pruned_output = pruned_model(z, c)
+
+    assert torch.equal(full_output, pruned_output)
+
+
+def test_build_pruned_mapping_network_rejects_num_classes_too_large():
+    shard = _make_fake_shard()
+    with pytest.raises(ValueError, match="büyük olamaz"):
+        build_pruned_mapping_network(shard, num_classes=EMBED_NUM + 1)

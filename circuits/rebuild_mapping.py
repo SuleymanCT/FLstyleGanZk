@@ -176,3 +176,49 @@ def build_mapping_network_from_shard(shard: dict) -> MinimalMappingNetwork:
         print(f"[rebuild_mapping] UYARI: shard'da tanınmayan/kullanılmayan anahtarlar var: {unrecognized}")
 
     return model
+
+
+def verify_prunable_embed_rows(c_tensors: list[torch.Tensor], num_classes: int) -> set[int]:
+    """`embed` tablosunu `num_classes` satıra budamanın güvenli olduğunu
+    GERÇEK `c` tensörleriyle doğrular — varsaymaz. Her `c` (k, num_classes)
+    one-hot olmalı; `argmax(dim=1)` ile gözlenen indeksler `[0, num_classes)`
+    dışına çıkarsa `ValueError` (budama YAPILAMAZ demektir). Gözlenen
+    benzersiz indeks kümesini döner (çağıran taraf loglar).
+    """
+    used_indices: set[int] = set()
+    for c in c_tensors:
+        if c.dim() != 2 or c.shape[1] != num_classes:
+            raise ValueError(
+                f"c şekli {tuple(c.shape)}, beklenen (k, {num_classes}) ile uyuşmuyor — "
+                f"budama güvenliği bu şekle dayanıyor."
+            )
+        used_indices.update(c.argmax(dim=1).tolist())
+
+    out_of_range = {i for i in used_indices if i < 0 or i >= num_classes}
+    if out_of_range:
+        raise ValueError(
+            f"Beklenmeyen indeks(ler) bulundu: {sorted(out_of_range)} — bunlar [0, {num_classes}) "
+            f"aralığının dışında. embed'i {num_classes} satıra budamak GÜVENLİ DEĞİL."
+        )
+    return used_indices
+
+
+def build_pruned_mapping_network(shard: dict, num_classes: int) -> MinimalMappingNetwork:
+    """`mapping.embed.weight`'i ilk `num_classes` satıra budayıp modülü
+    kurar. Çağırmadan ÖNCE `verify_prunable_embed_rows` ile bu budamanın
+    GERÇEK verilerle güvenli olduğu doğrulanmış olmalı — bu fonksiyon
+    kendisi bir doğrulama yapmaz, sadece budar (tek sorumluluk)."""
+    full_embed = shard["mapping.embed.weight"]
+    if num_classes > full_embed.shape[0]:
+        raise ValueError(
+            f"num_classes ({num_classes}) embed tablosunun satır sayısından ({full_embed.shape[0]}) büyük olamaz."
+        )
+
+    pruned_shard = dict(shard)  # sığ kopya — sadece embed.weight anahtarı değişecek
+    pruned_shard["mapping.embed.weight"] = full_embed[:num_classes].clone()
+
+    print(
+        f"[rebuild_mapping] embed budanıyor: {full_embed.shape[0]} -> {num_classes} satır "
+        f"({full_embed.shape[0] - num_classes} satır atılıyor)."
+    )
+    return build_mapping_network_from_shard(pruned_shard)

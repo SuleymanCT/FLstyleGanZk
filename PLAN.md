@@ -244,8 +244,36 @@ sahte çıktı yok.
   max_abs_diff=0.0) — ama bu sentetik ağırlıklarladır, gerçek StyleGAN-XL
   ağırlıklarıyla `ezkl`/Colab'da HENÜZ koşulmadı.
 
-- **C2** `circuits/export_mapping.py` — ONNX ihracı. Girdi z (k,512),
-  c (k,5) one-hot. onnxruntime ve torch farkı < 1e-4, değilse hata.
+- **C2** `circuits/export_mapping.py` — kod yazıldı VE yerelde
+  GERÇEKTEN uçtan uca test edildi (`onnx`/`onnxruntime` StyleGAN-XL/
+  ezkl/anvil gibi Colab'a özgü değil, sade CPU paketleri — bu oturumda
+  `pip install onnx onnxruntime` ile yerel test ortamına kuruldu; Faz
+  B/C0/C1'in "sadece Colab'da doğrulanabilir" sınırının aksine, bu
+  fazda export+onnxruntime karşılaştırmasının TAMAMI sentetik
+  ağırlıklarla yerelde koştu — `max_abs_diff=0.0` her adımda).
+
+  **Önce embed budaması** (`circuits/rebuild_mapping.py`'ye eklendi):
+  kullanıcının bulgusu — `embed` 1000×320 (320.000 parametre, mapping
+  toplamının ~yarısı) StyleGAN-XL'in ImageNet varsayılanından kalma,
+  bizim `c_dim=5` ile 995 satır hiç kullanılmıyor. `verify_prunable_embed_rows`
+  GERÇEK `c` tensörlerinin (C0'ın referans dosyalarından) `argmax`'ını
+  hesaplayıp `[0,5)` dışında bir indeks var mı diye DOĞRULUYOR (varsaymıyor);
+  `build_pruned_mapping_network` embed'i `[:5]`'e budayıp
+  `build_mapping_network_from_shard`'ı (değişmeden) yeniden kullanıyor.
+  Budanmış/budanmamış çıktılar aynı (z,c) üzerinde karşılaştırılıp
+  `max_abs_diff==0.0` doğrulanmadan ONNX ihracına GEÇİLMİYOR (sentetik
+  testte + smoke testte doğrulandı).
+
+  ONNX ihracı: `dynamic_axes` YOK (k sabit, ezkl'nin istediği gibi),
+  `opset` argümanla konfigüre edilebilir (varsayılan 13). `assert_num_ws_copies_identical`
+  `scripts/verify_rebuild.py`'den `circuits/compare_utils.py`'ye taşındı
+  (DRY, ikisi de kullanıyor).
+
+  **ÖNEMLİ BULGU (yerel testte doğrulandı, ezkl uyumluluğu Colab'da
+  netleşecek):** ihraç edilen ONNX grafiğinde `ArgMax` VE `Gather`
+  düğümleri var (`c.argmax(dim=1)` + embedding lookup'tan) — bkz. C3
+  notu aşağıda, ezkl bu op'ları desteklemeyebilir.
+
 - **C3** `circuits/calibrate.py` + `scripts/bench_circuit.py` — ızgara:
   k ∈ {1,4,8} × bit ∈ {8,16}. Her kombinasyon için kısıt sayısı,
   derleme/setup/ispat/doğrulama süresi, tepe RAM, ispat boyutu.
@@ -255,6 +283,18 @@ sahte çıktı yok.
 
 **Kabul:** en az bir (k, bit) kombinasyonu 30 dk altında ispat
 üretiyor.
+
+**Faz C2'den not (C3 için risk):** İhraç edilen ONNX grafiğinde
+`ArgMax` ve `Gather` düğümleri var (`c.argmax(dim=1)` ile sınıf
+indeksini bulup `embed`'den satır çekmekten geliyor — bkz. C2).
+ezkl'nin bu op'ları destekleyip desteklemediği HENÜZ bilinmiyor; C3'ün
+ilk adımı `gen_settings`/`compile_circuit`'in bu iki op'la ne yaptığını
+görmek olmalı. Desteklenmiyorsa olası çözüm: `c.argmax` + `Gather`
+yerine `c @ embed.weight[:5]` (matmul ile "seçim") — one-hot `c` zaten
+elde, bu matematiksel olarak birebir aynı sonucu verir ama ArgMax/Gather
+yerine tek bir MatMul kullanır (ZK devrelerinde yaygın bir "seçim"
+tekniği) — ama bu bir mimari değişiklik olacağından şimdiden
+uygulanmadı, sadece ezkl gerçekten tıkanırsa gündeme gelecek.
 
 **Faz B'den not (C3/C4 için girdi):** Oyuncak MLP'nin (32→32→8, ezkl
 varsayılan `calibrate_settings(..., "resources")` ile otomatik

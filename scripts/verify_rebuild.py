@@ -19,7 +19,7 @@ import os
 
 import torch
 
-from circuits.compare_utils import compute_comparison_stats
+from circuits.compare_utils import assert_num_ws_copies_identical, compute_comparison_stats
 from circuits.rebuild_mapping import build_mapping_network_from_shard, normalize_2nd_moment
 from configs.loader import load_paths
 from storage.hashing import canonical_hash
@@ -62,21 +62,6 @@ def load_reference(reference_dir: str, k: int) -> dict:
             f"Referans dosyası bulunamadı: '{ref_path}'. Önce 'python -m scripts.make_reference_outputs' çalışmış olmalı."
         )
     return torch.load(ref_path, map_location="cpu", weights_only=False)
-
-
-def assert_num_ws_copies_identical(w: torch.Tensor) -> None:
-    """Referanstaki w'nin (k, num_ws, w_dim) şeklinde num_ws boyunca
-    HEPSİ birebir aynı olmalı (broadcast'ten geldiği için). Değilse
-    referans dosyası beklenenden farklı — net hata."""
-    if w.dim() != 3:
-        raise RuntimeError(f"Referans 'w' 3 boyutlu (k, num_ws, w_dim) bekleniyordu, bulunan şekil: {tuple(w.shape)}")
-    reference_slice = w[:, 0:1, :]
-    if not torch.allclose(w, reference_slice.expand_as(w)):
-        max_diff = (w - reference_slice.expand_as(w)).abs().max().item()
-        raise RuntimeError(
-            f"Referanstaki w'nin num_ws kopyaları BİREBİR AYNI değil (max fark={max_diff}). "
-            f"Bu beklenmiyordu (broadcast salt tekrar olmalıydı) — referans dosyasını/varsayımları gözden geçir."
-        )
 
 
 def print_intermediate_diagnostics(model, z: torch.Tensor, c: torch.Tensor, reference: dict) -> None:
