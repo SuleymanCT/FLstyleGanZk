@@ -269,10 +269,28 @@ sahte çıktı yok.
   `scripts/verify_rebuild.py`'den `circuits/compare_utils.py`'ye taşındı
   (DRY, ikisi de kullanıyor).
 
-  **ÖNEMLİ BULGU (yerel testte doğrulandı, ezkl uyumluluğu Colab'da
-  netleşecek):** ihraç edilen ONNX grafiğinde `ArgMax` VE `Gather`
-  düğümleri var (`c.argmax(dim=1)` + embedding lookup'tan) — bkz. C3
-  notu aşağıda, ezkl bu op'ları desteklemeyebilir.
+  **Colab sonucu (1. tur):** parametre 669.248→350.848 (%47,6 azalma),
+  budanmış vs tam çıktı `max_abs_diff=0.0`, ONNX 35 düğüm, `onnxruntime`
+  vs torch/referans ~2e-6. Grafikte `ArgMax`+`Gather`+`Cast` VARDI —
+  ezkl için riskli.
+
+  **Düzeltme (2. tur):** `circuits/rebuild_mapping.py`'ye `embed_mode`
+  seçeneği eklendi — `"gather"` (orijinal: `embed(c.argmax(1))`) ve
+  `"matmul"` (`c @ embed.weight` — `c` one-hot olduğundan matematiksel
+  olarak ÖZDEŞ, `compare_embed_modes` ile 1e-6 toleransla doğrulanıyor;
+  yerel sentetik testte gerçek fark 0.0 çıktı). `circuits/export_mapping.py`
+  artık HER k için İKİ varyant ihraç ediyor: `mapping_k{k}_gather.onnx`
+  ve `mapping_k{k}_matmul.onnx`; ikisinin op dağılımı da
+  `{onnx_dir}/onnx_variants.json`'a yazılıyor (C3 benchmark tablosu
+  için ham veri). Moddan bağımsız eski isim (`mapping_k{k}.onnx`)
+  artık `matmul` varyantının kopyası (ArgMax/Gather İÇERMEZ) — bu
+  yerelde `ArgMax`/`Gather`'ın `matmul` modunda GERÇEKTEN kaybolduğu
+  doğrulanarak test edildi (`tests/test_export_mapping.py`). Gerçek
+  StyleGAN-XL ağırlıklarıyla iki varyantın ezkl'e karşı nihai
+  davranışı (hangisi derleniyor, kısıt sayısı/süre farkı) C3'te
+  ölçülecek — kullanıcının notu: "makalede somut bir devre optimizasyonu
+  bulgusu olacak", her iki varyant BİLEREK tutuluyor, ikisi de C3'e
+  girecek.
 
 - **C3** `circuits/calibrate.py` + `scripts/bench_circuit.py` — ızgara:
   k ∈ {1,4,8} × bit ∈ {8,16}. Her kombinasyon için kısıt sayısı,
@@ -284,17 +302,18 @@ sahte çıktı yok.
 **Kabul:** en az bir (k, bit) kombinasyonu 30 dk altında ispat
 üretiyor.
 
-**Faz C2'den not (C3 için risk):** İhraç edilen ONNX grafiğinde
-`ArgMax` ve `Gather` düğümleri var (`c.argmax(dim=1)` ile sınıf
-indeksini bulup `embed`'den satır çekmekten geliyor — bkz. C2).
-ezkl'nin bu op'ları destekleyip desteklemediği HENÜZ bilinmiyor; C3'ün
-ilk adımı `gen_settings`/`compile_circuit`'in bu iki op'la ne yaptığını
-görmek olmalı. Desteklenmiyorsa olası çözüm: `c.argmax` + `Gather`
-yerine `c @ embed.weight[:5]` (matmul ile "seçim") — one-hot `c` zaten
-elde, bu matematiksel olarak birebir aynı sonucu verir ama ArgMax/Gather
-yerine tek bir MatMul kullanır (ZK devrelerinde yaygın bir "seçim"
-tekniği) — ama bu bir mimari değişiklik olacağından şimdiden
-uygulanmadı, sadece ezkl gerçekten tıkanırsa gündeme gelecek.
+**Faz C2'den not (C3 için girdi — ÇÖZÜLDÜ, iki varyant hazır):** İhraç
+edilen ONNX grafiğinde `ArgMax`+`Gather`+`Cast` vardı (`c.argmax(dim=1)`
+ile sınıf indeksini bulup `embed`'den satır çekmekten geliyor). Çözüm
+uygulandı: `embed_mode="matmul"` (`c @ embed.weight`, `c` one-hot
+olduğundan matematiksel olarak özdeş) ile aynı devrenin `ArgMax`/`Gather`'sız
+bir varyantı üretiliyor. **C3'ün ilk adımı artık ikisini de ayrı ayrı
+`ezkl.gen_settings`/`compile_circuit`'e vermek olmalı** —
+`mapping_k{k}_gather.onnx` derlenemezse (ya da derlenip aşırı yavaşsa),
+`mapping_k{k}_matmul.onnx` fallback değil ANA yol olur. İkisi de
+BİLEREK tutuluyor (kullanıcı: "makalede somut bir devre optimizasyonu
+bulgusu olacak") — C3'ün (k, bit) benchmark ızgarasına `embed_mode`
+(gather/matmul) da bir boyut olarak eklenmeli, sadece k×bit değil.
 
 **Faz B'den not (C3/C4 için girdi):** Oyuncak MLP'nin (32→32→8, ezkl
 varsayılan `calibrate_settings(..., "resources")` ile otomatik

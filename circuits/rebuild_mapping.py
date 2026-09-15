@@ -30,6 +30,15 @@ Mimari sabitler (şekilden türetilemez, doğrulanmış kaynaktan alınır):
     embed_proj: lr_multiplier = 1.0   (MappingNetwork.__init__'te BELİRTİLMEMİŞ
                                         → FullyConnectedLayer sınıf varsayılanı)
     fc0, fc1:   lr_multiplier = 0.01  (MappingNetwork.__init__'te AÇIKÇA verilir)
+
+Faz C2'nin ilk Colab koşumunda ihraç edilen ONNX grafiğinde `ArgMax` +
+`Gather` (+`Cast`) çıktı — `c.argmax(dim=1)` ile `embed`'den satır
+seçmekten geliyor, ezkl için riskli. `c` zaten (k, num_classes) one-hot
+olduğundan `embed(c.argmax(1))` ile `c @ embed.weight` MATEMATİKSEL
+OLARAK ÖZDEŞ (one-hot ile matris çarpımı = seçilen satır) — bu yüzden
+`embed_mode="matmul"` seçeneği eklendi (`"gather"` varsayılan/orijinal
+davranış olarak kalıyor): `ArgMax`/`Gather` yerine sıradan bir `MatMul`
+üretir. Bkz. `compare_embed_modes`.
 """
 
 from __future__ import annotations
@@ -40,6 +49,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from circuits.compare_utils import compute_comparison_stats
+
 # Doğrulanmış kaynaktan (bkz. modül docstring'i) — şekilden türetilmez.
 FC_LR_MULTIPLIER = 0.01
 EMBED_PROJ_LR_MULTIPLIER = 1.0
@@ -48,6 +59,13 @@ LRELU_GAIN = math.sqrt(2.0)
 NORMALIZE_EPS = 1e-8
 
 IGNORED_SHARD_KEYS = ("mapping.w_avg",)
+
+# "gather": embed(c.argmax(dim=1)) — StyleGAN-XL'in gerçek forward'ı,
+#   ama ONNX grafiğinde ArgMax+Gather (+Cast) üretir (ezkl için riskli).
+# "matmul": c.matmul(embed.weight) — c ZATEN one-hot olduğundan
+#   matematiksel olarak GATHER İLE ÖZDEŞ (seçilen satırı döndürür),
+#   ama ONNX grafiğinde ArgMax/Gather yerine sıradan bir MatMul üretir.
+VALID_EMBED_MODES = ("gather", "matmul")
 
 
 def normalize_2nd_moment(x: torch.Tensor, dim: int = 1) -> torch.Tensor:
@@ -85,10 +103,13 @@ class MinimalMappingNetwork(nn.Module):
     yapan taraf referansın `w[:, 0, :]` dilimini almalı.
     """
 
-    def __init__(self, z_dim: int, embed_num: int, embed_dim: int, w_dim: int):
+    def __init__(self, z_dim: int, embed_num: int, embed_dim: int, w_dim: int, embed_mode: str = "gather"):
         super().__init__()
+        if embed_mode not in VALID_EMBED_MODES:
+            raise ValueError(f"embed_mode '{embed_mode}' geçersiz — beklenen: {VALID_EMBED_MODES}")
         self.z_dim = z_dim
         self.w_dim = w_dim
+        self.embed_mode = embed_mode
         self.embed = nn.Embedding(embed_num, embed_dim)
         self.embed_proj = EqualizedLinearLrelu(embed_dim, z_dim, lr_multiplier=EMBED_PROJ_LR_MULTIPLIER)
         self.fc0 = EqualizedLinearLrelu(2 * z_dim, w_dim, lr_multiplier=FC_LR_MULTIPLIER)
@@ -96,8 +117,12 @@ class MinimalMappingNetwork(nn.Module):
 
     def forward(self, z: torch.Tensor, c: torch.Tensor) -> torch.Tensor:
         x = normalize_2nd_moment(z.to(torch.float32))
-        indices = c.argmax(dim=1)
-        y = self.embed_proj(self.embed(indices))
+        if self.embed_mode == "gather":
+            indices = c.argmax(dim=1)
+            embedded = self.embed(indices)
+        else:  # "matmul" — c one-hot olduğundan gather ile matematiksel olarak özdeş
+            embedded = c.to(torch.float32).matmul(self.embed.weight)
+        y = self.embed_proj(embedded)
         y = normalize_2nd_moment(y)
         x = torch.cat([x, y], dim=1)
         x = self.fc0(x)
@@ -136,12 +161,16 @@ def infer_dims_from_shard(shard: dict) -> dict:
     return {"z_dim": z_dim, "embed_num": embed_num, "embed_dim": embed_dim, "w_dim": w_dim}
 
 
-def build_mapping_network_from_shard(shard: dict) -> MinimalMappingNetwork:
+def build_mapping_network_from_shard(shard: dict, embed_mode: str = "gather") -> MinimalMappingNetwork:
     dims = infer_dims_from_shard(shard)
-    print(f"[rebuild_mapping] Çıkarılan boyutlar: {dims}")
+    print(f"[rebuild_mapping] Çıkarılan boyutlar: {dims} (embed_mode={embed_mode})")
 
     model = MinimalMappingNetwork(
-        z_dim=dims["z_dim"], embed_num=dims["embed_num"], embed_dim=dims["embed_dim"], w_dim=dims["w_dim"]
+        z_dim=dims["z_dim"],
+        embed_num=dims["embed_num"],
+        embed_dim=dims["embed_dim"],
+        w_dim=dims["w_dim"],
+        embed_mode=embed_mode,
     )
 
     key_map = {
@@ -203,7 +232,7 @@ def verify_prunable_embed_rows(c_tensors: list[torch.Tensor], num_classes: int) 
     return used_indices
 
 
-def build_pruned_mapping_network(shard: dict, num_classes: int) -> MinimalMappingNetwork:
+def build_pruned_mapping_network(shard: dict, num_classes: int, embed_mode: str = "gather") -> MinimalMappingNetwork:
     """`mapping.embed.weight`'i ilk `num_classes` satıra budayıp modülü
     kurar. Çağırmadan ÖNCE `verify_prunable_embed_rows` ile bu budamanın
     GERÇEK verilerle güvenli olduğu doğrulanmış olmalı — bu fonksiyon
@@ -221,4 +250,30 @@ def build_pruned_mapping_network(shard: dict, num_classes: int) -> MinimalMappin
         f"[rebuild_mapping] embed budanıyor: {full_embed.shape[0]} -> {num_classes} satır "
         f"({full_embed.shape[0] - num_classes} satır atılıyor)."
     )
-    return build_mapping_network_from_shard(pruned_shard)
+    return build_mapping_network_from_shard(pruned_shard, embed_mode=embed_mode)
+
+
+def compare_embed_modes(shard: dict, num_classes: int, z: torch.Tensor, c: torch.Tensor, tolerance: float = 1e-6) -> dict:
+    """Aynı (budanmış) ağırlıklarla `"gather"` ve `"matmul"` modlarının
+    ÇIKTISINI karşılaştırır. `c` one-hot olduğundan matematiksel olarak
+    ÖZDEŞ olmaları beklenir — ama `matmul`'un float toplama sırası
+    `gather`'dan farklı olabileceğinden tam `0.0` DEĞİL, `tolerance`
+    (varsayılan 1e-6) ile kontrol edilir. Aşarsa gerçek değeri
+    mesajında raporlayan bir `RuntimeError` fırlatır.
+    """
+    gather_model = build_pruned_mapping_network(shard, num_classes=num_classes, embed_mode="gather")
+    matmul_model = build_pruned_mapping_network(shard, num_classes=num_classes, embed_mode="matmul")
+    gather_model.eval()
+    matmul_model.eval()
+
+    with torch.no_grad():
+        gather_output = gather_model(z, c)
+        matmul_output = matmul_model(z, c)
+
+    stats = compute_comparison_stats(gather_output, matmul_output)
+    if stats["max_abs_diff"] > tolerance:
+        raise RuntimeError(
+            f"'gather' ve 'matmul' modları FARKLI çıktı veriyor (max_abs_diff={stats['max_abs_diff']} > "
+            f"tolerance={tolerance}). Matematiksel olarak özdeş olmaları bekleniyordu (c one-hot)."
+        )
+    return stats

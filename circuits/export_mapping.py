@@ -9,6 +9,16 @@ budanmış modülün çıktısının budanmamışla birebir aynı olduğunu
 kanıtlar, sonra ONNX'e ihraç edip onnxruntime ile hem kendi çıktısına
 hem Faz C0'ın gerçek referansına karşı doğrular.
 
+Faz C2'nin ilk Colab koşumunda ihraç edilen graf `ArgMax`+`Gather`
+içeriyordu (ezkl için riskli). `c` one-hot olduğundan bu, matematiksel
+olarak bir `MatMul`'a özdeş (`circuits.rebuild_mapping.compare_embed_modes`)
+— bu yüzden HER `k` için İKİ varyant da ihraç edilir:
+`mapping_k{k}_gather.onnx` (orijinal) ve `mapping_k{k}_matmul.onnx`
+(ArgMax/Gather'sız). Moddan bağımsız eski isim (`mapping_k{k}.onnx`)
+`DEFAULT_ONNX_MODE`'un kopyasıdır. İkisinin de düğüm sayısı/op
+dağılımı `{onnx_dir}/onnx_variants.json`'a yazılır (Faz C3 benchmark'ı
+için).
+
 BİLİNÇLİ TEST SINIRI (kısmi): `export_to_onnx`/`summarize_onnx_graph`/
 `compare_onnx_vs_torch`/`compare_onnx_vs_reference` — StyleGAN-XL/Drive
 GEREKTİRMEZ (sadece `onnx`+`onnxruntime`, sade CPU paketleri), bu
@@ -23,7 +33,9 @@ Kullanım (Colab'da):
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import shutil
 from collections import Counter
 
 import onnx
@@ -31,12 +43,23 @@ import onnxruntime as ort
 import torch
 
 from circuits.compare_utils import assert_num_ws_copies_identical, compute_comparison_stats
-from circuits.rebuild_mapping import build_mapping_network_from_shard, build_pruned_mapping_network, verify_prunable_embed_rows
+from circuits.rebuild_mapping import (
+    build_mapping_network_from_shard,
+    build_pruned_mapping_network,
+    compare_embed_modes,
+    verify_prunable_embed_rows,
+)
 from configs.loader import load_paths
 from storage.pathguard import assert_writable
 
 DEFAULT_OPSET_VERSION = 13
 ONNX_VS_TORCH_TOLERANCE = 1e-4
+EMBED_MODES = ("gather", "matmul")
+EMBED_MODE_TOLERANCE = 1e-6
+# ArgMax/Gather ezkl icin riskli oldugundan (bkz. circuits/rebuild_mapping.py
+# docstring'i), moddan bagimsiz eski isim ("mapping_k{k}.onnx") bu moda
+# esitlenir - ArgMax/Gather ICERMEZ.
+DEFAULT_ONNX_MODE = "matmul"
 
 
 def export_to_onnx(model: torch.nn.Module, example_z: torch.Tensor, example_c: torch.Tensor, onnx_path: str, opset_version: int) -> None:
@@ -157,11 +180,14 @@ def main(argv=None) -> int:
     print(f"[export_mapping] reference_dir={reference_dir}")
     print(f"[export_mapping] onnx_dir={onnx_dir}")
     print(f"[export_mapping] round={args.round} site={args.site} k_values={k_values} opset={args.opset}")
+    print(f"[export_mapping] Varsayılan (moddan bağımsız isimli) ONNX modu: '{DEFAULT_ONNX_MODE}' (ArgMax/Gather İÇERMEZ)")
 
     shard = load_shard(shards_dir, args.round, args.site)
 
     assert_writable(onnx_dir)
     os.makedirs(onnx_dir, exist_ok=True)
+
+    variants_report: dict = {}
 
     for k in k_values:
         print(f"\n=== k={k} ===")
@@ -175,11 +201,11 @@ def main(argv=None) -> int:
 
         full_model = build_mapping_network_from_shard(shard)
         full_model.eval()
-        pruned_model = build_pruned_mapping_network(shard, num_classes=c_dim)
-        pruned_model.eval()
+        pruned_gather_model = build_pruned_mapping_network(shard, num_classes=c_dim, embed_mode="gather")
+        pruned_gather_model.eval()
 
         full_params = sum(p.numel() for p in full_model.parameters())
-        pruned_params = sum(p.numel() for p in pruned_model.parameters())
+        pruned_params = sum(p.numel() for p in pruned_gather_model.parameters())
         print(
             f"[export_mapping] Parametre sayısı: tam={full_params}, budanmış={pruned_params} "
             f"(%{100 * (full_params - pruned_params) / full_params:.1f} azalma)"
@@ -187,28 +213,77 @@ def main(argv=None) -> int:
 
         with torch.no_grad():
             full_output = full_model(z, c)
-            pruned_output = pruned_model(z, c)
+            pruned_output = pruned_gather_model(z, c)
         prune_stats = compute_comparison_stats(pruned_output, full_output)
-        print(f"[export_mapping] Budanmış vs tam çıktı max_abs_diff: {prune_stats['max_abs_diff']}")
+        print(f"[export_mapping] Budanmış(gather) vs tam çıktı max_abs_diff: {prune_stats['max_abs_diff']}")
         if prune_stats["max_abs_diff"] != 0.0:
             raise RuntimeError(
                 f"Budanmış modülün çıktısı tam modülle AYNI DEĞİL (max_abs_diff={prune_stats['max_abs_diff']}). "
                 f"Budama GÜVENLİ DEĞİL — ONNX ihracı yapılmıyor."
             )
 
-        onnx_path = os.path.join(onnx_dir, f"mapping_k{k}.onnx")
-        assert_writable(onnx_path)
-        export_to_onnx(pruned_model, z, c, onnx_path, args.opset)
-        print(f"[export_mapping] Yazıldı: {onnx_path}")
+        embed_mode_stats = compare_embed_modes(shard, num_classes=c_dim, z=z, c=c, tolerance=EMBED_MODE_TOLERANCE)
+        print(
+            f"[export_mapping] 'gather' vs 'matmul' çıktı farkı: max_abs_diff={embed_mode_stats['max_abs_diff']} "
+            f"(tolerans: {EMBED_MODE_TOLERANCE})"
+        )
 
-        graph_summary = summarize_onnx_graph(onnx_path)
-        print(f"[export_mapping] ONNX grafiği: {graph_summary['num_nodes']} düğüm, op dağılımı: {graph_summary['op_counts']}")
+        k_report: dict = {}
+        models_by_mode = {
+            "gather": pruned_gather_model,
+            "matmul": build_pruned_mapping_network(shard, num_classes=c_dim, embed_mode="matmul"),
+        }
 
-        torch_stats = compare_onnx_vs_torch(onnx_path, pruned_model, z, c)
-        print(f"[export_mapping] onnxruntime vs torch: max_abs_diff={torch_stats['max_abs_diff']}")
+        for mode in EMBED_MODES:
+            print(f"\n--- k={k} embed_mode={mode} ---")
+            model = models_by_mode[mode]
+            model.eval()
 
-        ref_stats = compare_onnx_vs_reference(onnx_path, reference)
-        print(f"[export_mapping] onnxruntime vs Faz C0 referansı: max_abs_diff={ref_stats['max_abs_diff']}")
+            variant_path = os.path.join(onnx_dir, f"mapping_k{k}_{mode}.onnx")
+            assert_writable(variant_path)
+            export_to_onnx(model, z, c, variant_path, args.opset)
+            print(f"[export_mapping] Yazıldı: {variant_path}")
+
+            graph_summary = summarize_onnx_graph(variant_path)
+            print(
+                f"[export_mapping] [{mode}] ONNX grafiği: {graph_summary['num_nodes']} düğüm, "
+                f"op dağılımı: {graph_summary['op_counts']}"
+            )
+
+            torch_stats = compare_onnx_vs_torch(variant_path, model, z, c)
+            print(f"[export_mapping] [{mode}] onnxruntime vs torch: max_abs_diff={torch_stats['max_abs_diff']}")
+
+            ref_stats = compare_onnx_vs_reference(variant_path, reference)
+            print(f"[export_mapping] [{mode}] onnxruntime vs Faz C0 referansı: max_abs_diff={ref_stats['max_abs_diff']}")
+
+            k_report[mode] = {
+                "onnx_path": variant_path,
+                "num_nodes": graph_summary["num_nodes"],
+                "op_counts": graph_summary["op_counts"],
+                "onnx_vs_torch_max_abs_diff": torch_stats["max_abs_diff"],
+                "onnx_vs_reference_max_abs_diff": ref_stats["max_abs_diff"],
+            }
+
+        # Geriye uyumluluk: moddan bağımsız eski isim = DEFAULT_ONNX_MODE'un kopyası.
+        legacy_path = os.path.join(onnx_dir, f"mapping_k{k}.onnx")
+        assert_writable(legacy_path)
+        shutil.copy2(k_report[DEFAULT_ONNX_MODE]["onnx_path"], legacy_path)
+        print(
+            f"\n[export_mapping] Geriye uyumluluk: '{legacy_path}' == '{k_report[DEFAULT_ONNX_MODE]['onnx_path']}' "
+            f"(varsayılan mod: '{DEFAULT_ONNX_MODE}', ArgMax/Gather İÇERMEZ)."
+        )
+
+        k_report["embed_mode_comparison_max_abs_diff"] = embed_mode_stats["max_abs_diff"]
+        k_report["pruned_vs_full_max_abs_diff"] = prune_stats["max_abs_diff"]
+        k_report["legacy_onnx_path"] = legacy_path
+        k_report["default_onnx_mode"] = DEFAULT_ONNX_MODE
+        variants_report[f"k{k}"] = k_report
+
+    variants_json_path = os.path.join(onnx_dir, "onnx_variants.json")
+    assert_writable(variants_json_path)
+    with open(variants_json_path, "w", encoding="utf-8") as f:
+        json.dump(variants_report, f, indent=2, ensure_ascii=False)
+    print(f"\n[export_mapping] Yazıldı: {variants_json_path}")
 
     print("\n[export_mapping] Bitti.")
     return 0
