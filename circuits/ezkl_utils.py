@@ -2,10 +2,10 @@
 
 BİLİNÇLİ TEST SINIRI: `run_async`/`run_get_srs` `ezkl` paketine
 bağımlıdır, gerçek çalışması yalnızca Colab'da (ezkl kurulu)
-doğrulanabilir. `parse_public_inputs` SAF bir fonksiyondur (sadece
-`proof.json`'un içeriğini işler, ezkl'ye bağımlı değildir) —
-`tests/test_ezkl_utils.py`'de sentetik `proof.json`'larla GERÇEKTEN
-test edilir.
+doğrulanabilir. `parse_public_inputs`/`parse_proof_bytes` SAF
+fonksiyonlardır (sadece `proof.json`'un içeriğini işler, ezkl'ye
+bağımlı değildir) — `tests/test_ezkl_utils.py`'de sentetik
+`proof.json`'larla GERÇEKTEN test edilir.
 """
 
 from __future__ import annotations
@@ -69,6 +69,39 @@ def run_get_srs(settings_path: str) -> None:
     import ezkl
 
     run_async(ezkl.get_srs, settings_path)
+
+
+def parse_proof_bytes(proof_json: dict) -> bytes:
+    """`proof.json`'un `proof` alanını `bytes`'a çevirir —
+    `RoundManager.submitProof`'un beklediği tip. Faz D'nin gerçek Colab
+    koşumunda gözlenen biçim: `proof` bir INT LİSTESİ (`[16, 209, 217, ...]`,
+    her eleman 0-255 arası bir byte değeri) — hex string DEĞİL. Diğer
+    olası biçimler (hex string, `0x` önekli/öneksiz, zaten `bytes`) de
+    destekleniyor; tanınmayan bir biçimde net bir hata verilir, sessizce
+    yanlış bir dönüşüm YAPILMAZ."""
+    if "proof" not in proof_json:
+        raise KeyError(f"proof_json'da 'proof' anahtarı yok. Bulunan anahtarlar: {sorted(proof_json.keys())}")
+    proof = proof_json["proof"]
+
+    if isinstance(proof, (bytes, bytearray)):
+        return bytes(proof)
+
+    if isinstance(proof, str):
+        cleaned = proof[2:] if proof.lower().startswith("0x") else proof
+        if len(cleaned) % 2 != 0:
+            raise ValueError(f"proof hex string tek sayıda karakter içeriyor (uzunluk={len(cleaned)}): {proof[:20]}...")
+        try:
+            return bytes.fromhex(cleaned)
+        except ValueError as e:
+            raise ValueError(f"proof hex string olarak parse edilemedi: {e}") from e
+
+    if isinstance(proof, list):
+        if not all(isinstance(v, int) and 0 <= v <= 255 for v in proof):
+            bad_examples = [v for v in proof if not (isinstance(v, int) and 0 <= v <= 255)][:5]
+            raise ValueError(f"proof bir int listesi ama tüm elemanlar 0-255 aralığında byte değil. Örnek geçersizler: {bad_examples}")
+        return bytes(proof)
+
+    raise TypeError(f"proof_json['proof'] beklenmeyen tipte: {type(proof).__name__} (değer: {proof!r:.200s})")
 
 
 def _flatten(nested) -> list:

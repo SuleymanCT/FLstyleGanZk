@@ -226,7 +226,21 @@ class RoundManagerClient(Web3Client):
         """`verifier_address`: bu (round,site)'a özgü, `param_visibility="fixed"`
         yüzünden HER (round,site) için AYRI deploy edilmiş Verifier
         kontratının adresi (bkz. contracts/RoundManager.sol'un tepesindeki
-        "ÖNEMLİ TASARIM NOTU")."""
+        "ÖNEMLİ TASARIM NOTU").
+
+        `proof` KESİNLİKLE `bytes`/`bytearray` olmalı — burada SESSİZCE
+        çevrilmez (Faz D'nin gerçek Colab koşumunda `proof.json`'un
+        `proof` alanı bir INT LİSTESİ olarak geldi, `web3.py` bunu
+        `bytes` beklenen bir argümana verince net olmayan bir hata
+        verdi: "Argument 3 value [...] is not compatible with type
+        `bytes`"). Çağıran taraf `circuits.ezkl_utils.parse_proof_bytes(proof_json)`
+        ile dönüştürmüş OLMALI — burada sadece DOĞRULANIR, net bir
+        `TypeError` ile."""
+        if not isinstance(proof, (bytes, bytearray)):
+            raise TypeError(
+                f"[RoundManagerClient.submit_proof] 'proof' bytes/bytearray olmalı, alınan tip: {type(proof).__name__}. "
+                f"circuits.ezkl_utils.parse_proof_bytes(proof_json) ile dönüştürüldüğünden emin ol."
+            )
         account = self.w3.eth.account.from_key("0x" + normalize_private_key_hex(private_key))
         _, gas = self._send(
             self.contract.functions.submitProof(round_id, Web3.to_checksum_address(verifier_address), proof, public_inputs),

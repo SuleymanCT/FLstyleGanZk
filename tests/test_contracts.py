@@ -41,7 +41,7 @@ from chain.anvil import AnvilProcess  # noqa: E402
 from chain.client import RoundManagerClient, Web3Client  # noqa: E402
 from chain.solc import compile_with_fallback_strategies  # noqa: E402
 from circuits.export_mapping import export_to_onnx  # noqa: E402
-from circuits.ezkl_utils import parse_public_inputs  # noqa: E402
+from circuits.ezkl_utils import parse_proof_bytes, parse_public_inputs  # noqa: E402
 from circuits.rebuild_mapping import build_pruned_mapping_network  # noqa: E402
 from circuits.toy_pipeline import compile_verifier_solidity, generate_solidity_verifier  # noqa: E402
 from scripts.bench_circuit import build_multi_input_json, run_ezkl_pipeline, run_prove_and_verify, write_json_file  # noqa: E402
@@ -100,7 +100,7 @@ def _shared_setup():
 
         with open(prove_result["proof_path"], encoding="utf-8") as f:
             proof_json = json.load(f)
-        proof_bytes = bytes.fromhex(proof_json["proof"].removeprefix("0x")) if isinstance(proof_json["proof"], str) else proof_json["proof"]
+        proof_bytes = parse_proof_bytes(proof_json)
         public_inputs = parse_public_inputs(proof_json)
 
         sol_path, _abi_path = generate_solidity_verifier(setup_result["paths"], work_dir)

@@ -2,7 +2,7 @@ import asyncio
 
 import pytest
 
-from circuits.ezkl_utils import BN254_SCALAR_FIELD_MODULUS, parse_public_inputs, run_async
+from circuits.ezkl_utils import BN254_SCALAR_FIELD_MODULUS, parse_proof_bytes, parse_public_inputs, run_async
 
 
 def test_run_async_with_sync_function():
@@ -108,3 +108,52 @@ def test_parse_public_inputs_raises_on_mixed_types():
 
 def test_parse_public_inputs_empty_instances_returns_empty_list():
     assert parse_public_inputs({"instances": []}) == []
+
+
+def test_parse_proof_bytes_from_int_list():
+    # Faz D'nin gerçek Colab koşumunda gözlenen biçim: proof bir INT
+    # LİSTESİ (hex string DEĞİL).
+    values = [16, 209, 217, 7, 255, 0]
+    assert parse_proof_bytes({"proof": values}) == bytes(values)
+
+
+def test_parse_proof_bytes_from_hex_string_without_prefix():
+    raw = bytes([1, 2, 3, 254, 255])
+    assert parse_proof_bytes({"proof": raw.hex()}) == raw
+
+
+def test_parse_proof_bytes_from_hex_string_with_0x_prefix():
+    raw = bytes([10, 20, 30])
+    assert parse_proof_bytes({"proof": "0x" + raw.hex()}) == raw
+
+
+def test_parse_proof_bytes_from_already_bytes():
+    raw = bytes([1, 2, 3])
+    assert parse_proof_bytes({"proof": raw}) == raw
+
+
+def test_parse_proof_bytes_from_bytearray():
+    raw = bytearray([9, 9, 9])
+    result = parse_proof_bytes({"proof": raw})
+    assert isinstance(result, bytes)
+    assert result == bytes(raw)
+
+
+def test_parse_proof_bytes_raises_on_missing_key():
+    with pytest.raises(KeyError, match="proof"):
+        parse_proof_bytes({"instances": []})
+
+
+def test_parse_proof_bytes_raises_on_odd_length_hex_string():
+    with pytest.raises(ValueError, match="tek sayıda"):
+        parse_proof_bytes({"proof": "abc"})
+
+
+def test_parse_proof_bytes_raises_on_out_of_range_int_list():
+    with pytest.raises(ValueError, match="0-255"):
+        parse_proof_bytes({"proof": [16, 300, -1]})
+
+
+def test_parse_proof_bytes_raises_on_unrecognized_type():
+    with pytest.raises(TypeError, match="beklenmeyen tipte"):
+        parse_proof_bytes({"proof": 12345})

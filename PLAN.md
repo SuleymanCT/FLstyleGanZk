@@ -745,10 +745,32 @@ bu round'a zaten gonderim yapildi", "RoundManager: kayitli site degil").
   metnini de (`"zaten gonderim yapildi"`, `"kayitli site degil"`,
   `"dogrulanmamis site finalizeRound'a dahil edilemez"`) doğruluyor.
 
+**3. Colab koşumu — 5/6 test geçti, mutlu yolda TEK kalan hata:**
+`public_inputs` düzeltmesi tuttu ("Argument 4 value [0, 2188824287...,
+1, 1, 6] is valid"). Kalan hata: `"Argument 3 value [16, 209, 217, 7,
+...] is not compatible with type bytes"` — `proof.json`'un `proof`
+alanı da (`instances` gibi) beklenmeyen bir biçimdeydi: hex string
+DEĞİL, bir INT LİSTESİ. `_shared_setup`'taki eski dönüşüm
+(`isinstance(proof_json["proof"], str)`) sadece hex-string dalını
+kapsıyordu, int listesini OLDUĞU GİBİ bırakıyordu (diğer 5 test
+`bytes(corrupted)` ile ayrıca çevirdiği için sorunsuz geçmişti).
+**Düzeltme:** `circuits/ezkl_utils.py: parse_proof_bytes` (yeni,
+`parse_public_inputs`'un yanında) — int listesi (0-255 aralığı
+doğrulanarak), hex string (`0x` önekli/öneksiz), zaten `bytes`/`bytearray`
+olan durumların HEPSİNİ `bytes`'a çevirir, tanınmayan bir biçimde net
+hata verir. `orchestrator/round_runner.py`/`tests/test_contracts.py`'nin
+fragile inline dönüşümü bununla değiştirildi. `chain/client.py:
+RoundManagerClient.submit_proof` artık `proof` parametresi `bytes`/`bytearray`
+DEĞİLSE (sessizce çevirmeden) net bir `TypeError` veriyor — çağıran
+tarafın `parse_proof_bytes` kullanması ZORUNLU. 9 yeni test (int listesi,
+hex öneksiz/önekli, bytes, bytearray, eksik anahtar, tek-karakter hex,
+aralık-dışı int, tanınmayan tip), saf, yerelde GERÇEKTEN doğrulandı
+(241 passed, 2 skipped toplam).
+
 **Kabul:** testler yeşil, gas rakamları raporlandı. **HENÜZ KARŞILANMADI**
-— Colab'da `tests/test_contracts.py`'nin TAMAMI (bu iki düzeltmeyle)
-koşulup gerçek gas/zaman rakamları raporlanana kadar bu faz "tamamlandı"
-sayılmayacak.
+— Colab'da `tests/test_contracts.py`'nin TAMAMI (bu üç düzeltmeyle,
+özellikle mutlu yol testi) koşulup gerçek gas/zaman rakamları
+raporlanana kadar bu faz "tamamlandı" sayılmayacak.
 
 ## Faz E (yerel + Colab) — Replay
 
