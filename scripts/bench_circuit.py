@@ -207,6 +207,29 @@ def combo_key(combo: dict) -> str:
     return f"k{combo['k']}_{combo['embed_mode']}_scale{combo['scale']}"
 
 
+_COMBO_KEY_RE = re.compile(r"^k(\d+)_(\w+)_scale(\d+)$")
+
+
+def parse_combo_key(key: str) -> dict:
+    """`combo_key`'in tersi: `"k4_matmul_scale8"` -> `{"k":4,"embed_mode":"matmul","scale":8}`.
+    `--only` için — tek tek kombinasyon anahtarı yeniden koşulacak, tüm
+    ızgarayı (k-values/embed-modes/scales) yeniden inşa etmeye gerek yok."""
+    match = _COMBO_KEY_RE.match(key.strip())
+    if not match:
+        raise ValueError(f"Geçersiz kombinasyon anahtarı: {key!r} (beklenen biçim: k<k>_<embed_mode>_scale<scale>)")
+    k_str, embed_mode, scale_str = match.groups()
+    if embed_mode not in VALID_EMBED_MODES:
+        raise ValueError(f"Geçersiz embed_mode {embed_mode!r} ({key!r} içinde) — geçerli: {VALID_EMBED_MODES}")
+    return {"k": int(k_str), "embed_mode": embed_mode, "scale": int(scale_str)}
+
+
+def parse_only_keys(raw: str) -> list[dict]:
+    keys = [k.strip() for k in raw.split(",") if k.strip()]
+    if not keys:
+        raise ValueError(f"--only boş/geçersiz: {raw!r}")
+    return [parse_combo_key(k) for k in keys]
+
+
 def count_decomposition_warnings(log_text: str) -> int:
     """Faz B'de gözlenen gerçek uyarı metni: "decomposition error: integer
     ... is too large" (bkz. docs/phase_b_report.md). Fatal değil, sınıra
@@ -214,11 +237,50 @@ def count_decomposition_warnings(log_text: str) -> int:
     return log_text.lower().count("decomposition error")
 
 
+def parse_markdown_table_column(text: str, column_name: str) -> float | None:
+    """ezkl'nin "Numerical Fidelity Report"u pipe'lı bir markdown tablo
+    olarak basılıyor (Faz C3'ün gerçek Colab koşumunda gözlendi — basit
+    `max_abs_error=X` biçimi DEĞİL): bir başlık satırı (sütun adları,
+    `|` ile ayrılmış), opsiyonel bir `---` ayraç satırı, ve bir veri
+    satırı. `column_name`'i (case-insensitive) İÇEREN başlık satırını
+    bulup AYNI sütun indeksindeki sayıyı sıradaki (ayraç olmayan) veri
+    satırından okur. Bulunamazsa None (uydurmaz)."""
+    lines = text.splitlines()
+    target = column_name.strip().lower()
+    for i, line in enumerate(lines):
+        if "|" not in line:
+            continue
+        header_cells = [c.strip().lower() for c in line.strip().strip("|").split("|")]
+        if target not in header_cells:
+            continue
+        col_idx = header_cells.index(target)
+        for candidate in lines[i + 1 : i + 4]:
+            if "|" not in candidate:
+                continue
+            cells = [c.strip() for c in candidate.strip().strip("|").split("|")]
+            if col_idx >= len(cells):
+                continue
+            value = cells[col_idx]
+            if re.fullmatch(r"[-: ]+", value):  # ayraç satırı ("---", ":--:" vb.)
+                continue
+            try:
+                return float(value)
+            except ValueError:
+                continue
+    return None
+
+
 def extract_max_abs_error(log_text: str) -> float | None:
-    """ezkl'nin "Numerical Fidelity Report"unda gözlenen `max_abs_error=...`
-    alanını ayrıştırır (bkz. docs/phase_b_report.md: `max_abs_error=0.00033`).
-    Birden fazla eşleşme varsa SONUNCUYU döner (en güncel rapor).
-    Hiç bulunamazsa None (uydurmaz)."""
+    """ezkl'nin "Numerical Fidelity Report"undaki `max_abs_error`'ı okur.
+    Önce GERÇEK gözlenen biçimi (çok sütunlu pipe'lı markdown tablo,
+    `parse_markdown_table_column`) dener; bulamazsa geriye dönük olarak
+    basit `max_abs_error=X`/`max_abs_error: X` biçimini dener (birden
+    fazla eşleşme varsa SONUNCUYU döner). Hiçbiri bulunamazsa None
+    (uydurmaz — çağıran taraf, log'da "max_abs_error" GEÇİYORSA ama
+    yine de None dönüyorsa bunu "yakalanamadı" olarak ayrı işaretler)."""
+    value = parse_markdown_table_column(log_text, "max_abs_error")
+    if value is not None:
+        return value
     matches = _MAX_ABS_ERROR_RE.findall(log_text)
     if not matches:
         return None
@@ -580,6 +642,8 @@ def run_worker(args: argparse.Namespace) -> int:
         setup_result = run_ezkl_pipeline(onnx_path, input_json_path, work_dir, args.scale)
         result["timings"].update(setup_result["timings"])
         result["circuit_stats"] = setup_result["circuit_stats"]
+        result["requested_scale"] = setup_result["requested_scale"]
+        result["realized_scale"] = setup_result["realized_scale"]
         result["pk_size_bytes"] = setup_result["pk_size_bytes"]
         result["vk_size_bytes"] = setup_result["vk_size_bytes"]
         ezkl_paths = setup_result["paths"]
@@ -697,16 +761,24 @@ def run_combo_in_subprocess(
 
     result["returncode"] = proc.returncode
     result["decomposition_warning_count"] = count_decomposition_warnings(stdout or "")
-    result["max_abs_error"] = extract_max_abs_error(stdout or "")
     result["log_path"] = str(log_path)
 
-    # scale/fidelity ödünleşimi için: max_abs_error'u w'nin gerçek büyüklüğüne (worker'ın
-    # kendi kaydettiği w_abs_max) oranlayıp yüzde olarak da raporluyoruz (makale tablosu).
-    w_abs_max = result.get("w_abs_max")
-    if result.get("max_abs_error") is not None and w_abs_max:
-        result["max_abs_error_relative_pct"] = 100.0 * result["max_abs_error"] / w_abs_max
+    max_abs_error = extract_max_abs_error(stdout or "")
+    if max_abs_error is None and re.search(r"max_abs_error", stdout or "", re.IGNORECASE):
+        # Log'da "max_abs_error" GEÇİYOR (ezkl raporu bastı) ama yapısal ayrıştırma
+        # başarısız oldu - "-" (rapor hiç yok) ile karışmasın diye AÇIKÇA işaretle.
+        print(f"[bench_circuit] UYARI: '{key}' log'unda 'max_abs_error' geçiyor ama ayrıştırılamadı.")
+        result["max_abs_error"] = "yakalanamadi"
+        result["max_abs_error_relative_pct"] = "yakalanamadi"
     else:
-        result["max_abs_error_relative_pct"] = None
+        result["max_abs_error"] = max_abs_error
+        # scale/fidelity ödünleşimi için: max_abs_error'u w'nin gerçek büyüklüğüne (worker'ın
+        # kendi kaydettiği w_abs_max) oranlayıp yüzde olarak da raporluyoruz (makale tablosu).
+        w_abs_max = result.get("w_abs_max")
+        if max_abs_error is not None and w_abs_max:
+            result["max_abs_error_relative_pct"] = 100.0 * max_abs_error / w_abs_max
+        else:
+            result["max_abs_error_relative_pct"] = None
 
     return result
 
@@ -733,6 +805,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--embed-modes", default=",".join(DEFAULT_EMBED_MODES))
     parser.add_argument("--scales", default=",".join(str(s) for s in DEFAULT_SCALES))
     parser.add_argument("--only-first", action="store_true", help="sadece ilk (en küçük) kombinasyonu koş")
+    parser.add_argument(
+        "--only", default=None,
+        help="virgülle ayrılmış kombinasyon anahtarı listesi (ör. 'k4_matmul_scale8,k1_matmul_scale8') - "
+        "SADECE bunları koştur, tüm ızgarayı değil (--k-values/--embed-modes/--scales/--only-first yoksayılır)",
+    )
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS, help="kombinasyon başına saniye")
     parser.add_argument("--force", action="store_true", help="zaten sonuçlandırılmış kombinasyonları yeniden çalıştır")
     # Aşağıdakiler SADECE alt süreç (--worker) tarafından kullanılır; kullanıcıya gösterilmez.
@@ -766,7 +843,7 @@ def main(argv=None) -> int:
     print(f"[bench_circuit] bench_dir={bench_dir} (KÜÇÜK sonuç dosyaları — Drive)")
     print(f"[bench_circuit] work_root={work_root} (BÜYÜK ara dosyalar — yerel disk, --keep-artifacts yoksa her kombinasyon sonrası temizlenir)")
     print(f"[bench_circuit] k_values={k_values} embed_modes={embed_modes} scales={scales}")
-    print(f"[bench_circuit] timeout={args.timeout}s only_first={args.only_first} force={args.force} keep_artifacts={args.keep_artifacts}")
+    print(f"[bench_circuit] timeout={args.timeout}s only_first={args.only_first} only={args.only!r} force={args.force} keep_artifacts={args.keep_artifacts}")
 
     assert_writable(str(bench_dir))
     bench_dir.mkdir(parents=True, exist_ok=True)
@@ -776,8 +853,12 @@ def main(argv=None) -> int:
     assert_writable(str(work_root))
     work_root.mkdir(parents=True, exist_ok=True)
 
-    grid = build_grid(k_values, embed_modes, scales, only_first=args.only_first)
-    print(f"[bench_circuit] Izgara: {len(grid)} kombinasyon")
+    if args.only:
+        grid = parse_only_keys(args.only)
+        print(f"[bench_circuit] --only verildi, ızgara yoksayılıyor. Sadece {len(grid)} kombinasyon koşulacak:")
+    else:
+        grid = build_grid(k_values, embed_modes, scales, only_first=args.only_first)
+        print(f"[bench_circuit] Izgara: {len(grid)} kombinasyon")
     for combo in grid:
         print(f"  - {combo_key(combo)}")
 

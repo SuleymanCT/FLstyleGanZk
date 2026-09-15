@@ -1,4 +1,6 @@
-from chain.anvil import find_free_port, is_anvil_ready, parse_anvil_accounts
+import pytest
+
+from chain.anvil import find_free_port, is_anvil_ready, normalize_private_key_hex, parse_anvil_accounts
 
 SAMPLE_ANVIL_OUTPUT = """
                              _   _
@@ -59,3 +61,25 @@ def test_parse_anvil_accounts_pairs_addresses_with_keys():
 
 def test_parse_anvil_accounts_returns_empty_on_unrecognized_text():
     assert parse_anvil_accounts("beklenmeyen cikti, hesap yok") == []
+
+
+def test_normalize_private_key_hex_strips_0x_prefix():
+    assert (
+        normalize_private_key_hex("0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80")
+        == "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    )
+
+
+def test_normalize_private_key_hex_accepts_already_unprefixed():
+    key = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+    assert normalize_private_key_hex(key) == key
+
+
+def test_normalize_private_key_hex_rejects_wrong_length():
+    with pytest.raises(ValueError, match="Geçersiz private key"):
+        normalize_private_key_hex("0xdeadbeef")
+
+
+def test_normalize_private_key_hex_rejects_non_hex_characters():
+    with pytest.raises(ValueError, match="Geçersiz private key"):
+        normalize_private_key_hex("0x" + "zz" * 32)

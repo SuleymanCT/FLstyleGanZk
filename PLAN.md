@@ -182,7 +182,11 @@ sahte çıktı yok.
 
 ## Faz C (yerel + Colab) — Gerçek mapping devresi
 
-**durum: yapılmadı**
+**durum: C0/C1/C2/C3 Colab'da tamamlandı ve doğrulandı (bkz. aşağıdaki
+notlar + `docs/phase_c_report.md`); C4 (kuantizasyon etkisi) yapılmadı.**
+Operasyonel devre parametreleri `configs/circuit.yaml`'a yazıldı:
+`challenge_size_k=1`, `embed_mode=matmul`, `scale=8` — gerekçeler C3
+notunda ve dosyanın kendi yorumlarında.
 
 - **C0** `scripts/make_reference_outputs.py` — kod yazıldı (yeni:
   `fl/reference_utils.py` (saf, yerelde test edildi: `build_class_indices`,
@@ -436,11 +440,39 @@ sahte çıktı yok.
   hiç verilmediğinden (`None`) ezkl kendi varsayılan önbelleğini
   kullanıyor, work_dir'e hiç yazılmıyor, zaten Drive'a gitmiyor.
 
+  **TAM IZGARA SONUCU (Colab, 30/30 kombinasyon koştu) — bkz.
+  `docs/phase_c_report.md` (tam analiz):**
+  - **Ölçek tavanı = 8** (her k/embed_mode'da tutarlı): scale 6/7/8 hep
+    geçiyor, 9/10 hep kalibrasyonda düşüyor. `decomposition_uyari` HER
+    kombinasyonda 0 — gerçek devre sert bir eşikte duruyor, oyuncak
+    modelin "yavaşça bozulma" davranışını göstermiyor.
+  - **matmul, gather'dan ~2× ucuz** (k=1, scale=8): prove 37.1s/75.5s,
+    setup 36.0s/69.6s, pk 2.52GB/5.61GB, tepe RAM 7.3GB/17.3GB, verifier
+    bytecode 14.929B/19.735B, verify_gas 1.174.812/1.350.486 — somut
+    devre-optimizasyonu bulgusu (C2'nin öngördüğü gibi).
+  - **EIP-170: sadece k=1 geçiyor** (14.929/19.735 byte); k=4/k=8
+    AŞIYOR (26.757/26.758, 32.144/32.142 byte) — zincir üstü doğrulama
+    sadece k=1 ile mümkün. **Protokol sonucu: Faz D her challenge'da TEK
+    örnek ispatlamalı** (`configs/circuit.yaml: challenge_size_k=1`).
+  - **3 hata düzeltildi:** (1) `ezkl.deploy_evm` private key `0x` önekiyle
+    çağrılıyordu, `deploy_evm` önekSİZ 64-hex bekliyor —
+    `chain/anvil.py: normalize_private_key_hex` eklendi, k=4/k=8 artık
+    private-key hatası yerine gerçek EIP-170 deploy hatasıyla düşecek.
+    (2) `max_abs_error`/`max_abs_error_%` boştu — ezkl'nin GERÇEK
+    raporu basit `k=v` değil çok sütunlu pipe'lı markdown tablo;
+    `parse_markdown_table_column` (yeni) sütun-bazlı okuyor, hâlâ
+    ayrıştırılamazsa `"yakalanamadi"` yazıyor (boş bırakmıyor). (3)
+    `gerceklesen_scale` boştu — basit bir kopyalama hatası
+    (`run_worker`, `setup_result["realized_scale"]`'i `result`'a hiç
+    kopyalamıyordu), düzeltildi. `--only` bayrağı eklendi (belirli
+    kombinasyonları yeniden koşmak için, 30'unu baştan koşmadan).
+
 - **C4** Kuantizasyon etkisi: w_q ve fp32 w arasında kosinüs benzerliği
   ve L2 farkı, DR sınıfı başına ayrı.
 
 **Kabul:** en az bir (k, bit) kombinasyonu 30 dk altında ispat
-üretiyor.
+üretiyor. **KARŞILANDI** — k=1, matmul, scale=8: setup 36.0s + prove
+37.1s ≈ 73s toplam, 30 dk'nın çok altında.
 
 **Faz C2'den not (C3 için girdi — ÇÖZÜLDÜ, iki varyant hazır):** İhraç
 edilen ONNX grafiğinde `ArgMax`+`Gather`+`Cast` vardı (`c.argmax(dim=1)`

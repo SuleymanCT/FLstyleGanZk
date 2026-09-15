@@ -28,7 +28,7 @@ from pathlib import Path
 import ezkl
 import torch
 
-from chain.anvil import AnvilProcess
+from chain.anvil import AnvilProcess, normalize_private_key_hex
 from chain.client import Web3Client
 from chain.solc import compile_with_fallback_strategies
 from circuits.ezkl_utils import run_async, run_get_srs
@@ -194,15 +194,21 @@ def deploy_and_verify_via_ezkl_native(sol_path: Path, proof_path: Path, work_dir
     alınamıyor — `Web3Client.find_transaction_gas` ile geriye dönük
     zincir taramasıyla kurtarılmaya çalışılıyor, bulunamazsa `None`
     kalır (uydurulmaz).
+
+    `ezkl.deploy_evm` private key'i `Web3Client`/anvil bannerının aksine
+    `0x` ÖNEKİ OLMADAN bekliyor (Faz C3'ün gerçek Colab koşumunda
+    gözlenen hata: `[eth] Private key must be in hex format, 64 chars,
+    without 0x prefix`) — `normalize_private_key_hex` ile düzeltiliyor.
     """
     if not anvil.accounts:
         raise RuntimeError("anvil hesap listesi boş — deploy için hesap yok.")
     _, private_key = anvil.accounts[0]
+    private_key_hex = normalize_private_key_hex(private_key)
     client = Web3Client(anvil.rpc_url)
 
     addr_path = work_dir / "verifier_address.txt"
     print("[toy_pipeline]  ezkl.deploy_evm (native) ile deploy ediliyor...")
-    run_async(ezkl.deploy_evm, str(addr_path), str(sol_path), anvil.rpc_url, "verifier", 200, private_key)
+    run_async(ezkl.deploy_evm, str(addr_path), str(sol_path), anvil.rpc_url, "verifier", 200, private_key_hex)
     if not addr_path.exists():
         raise RuntimeError(f"deploy_evm sonrası adres dosyası yok: {addr_path}")
     address = addr_path.read_text(encoding="utf-8").strip()

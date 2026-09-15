@@ -1,20 +1,52 @@
-# ZK devre parametreleri. Şu an hepsi placeholder/null — Faz C
-# (circuits/calibrate.py + scripts/bench_circuit.py) sonunda gerçek
-# değerlerle doldurulacak.
+# ZK devre parametreleri. Faz C3 benchmark ızgarasının (scripts/bench_circuit.py,
+# k x embed_mode x scale, 30 kombinasyon) GERÇEK Colab sonucuna göre
+# BELİRLENDİ — varsayım değil, ölçüm (bkz. docs/phase_c_report.md).
 
 # challenge_size_k: her ispat turunda kaç (z, c) örneğinin devreden
-# geçirileceği. Faz C'de {1, 4, 8} taranacak.
-challenge_size_k: null
+# geçirileceği. k=1 SEÇİLDİ: k=4 ve k=8 verifier kontratlarının deployed
+# bytecode'u (26.757-32.144 byte) EIP-170'in 24.576 byte sınırını AŞIYOR
+# — zincire deploy EDİLEMİYOR. Sadece k=1 (14.929-19.735 byte) sınırın
+# altında kalıyor. Sonuç: protokol HER CHALLENGE'DA TEK ÖRNEK ispatlıyor
+# (batch/toplu ispat bu devre boyutunda mümkün değil).
+challenge_size_k: 1
 
-# bit_width: ezkl sabit noktalı kuantizasyon bit genişliği.
-# Faz C'de {8, 16} taranacak.
+# embed_mode: circuits/rebuild_mapping.py'nin embed-lookup stratejisi
+# ("gather": embed(c.argmax(1)), ONNX'te ArgMax+Gather; "matmul": c @
+# embed.weight, c one-hot olduğundan matematiksel olarak ÖZDEŞ ama sadece
+# MatMul üretir). "matmul" SEÇİLDİ — hem ArgMax/Gather'sız (ezkl için
+# daha güvenli) hem de ÖLÇÜLEN HER METRİKTE ~2x daha ucuz (k=1, scale=8,
+# gerçek Colab ölçümü):
+#   prove: 37.1s (matmul) vs 75.5s (gather)
+#   setup: 36.0s vs 69.6s
+#   pk boyutu: 2.52 GB vs 5.61 GB
+#   tepe RAM: 7.3 GB vs 17.3 GB
+#   verifier deployed bytecode: 14.929 B vs 19.735 B
+#   verify_gas: 1.174.812 vs 1.350.486
+embed_mode: matmul
+
+# scale: ezkl'nin input_scale/param_scale'i (sabit noktalı ölçek faktörü,
+# calibrate_settings'e scales=[scale] kwarg'ı ile veriliyor — bkz.
+# scripts/bench_circuit.py: run_ezkl_pipeline). 8 SEÇİLDİ: {6,7,8,9,10}
+# taramasında 9 ve 10 HER k/embed_mode kombinasyonunda calibrate_settings'te
+# düştü ("[halo2] General synthesis error" / "significant bit truncation
+# ... try lowering the scale"). Çalışan tavan 8 — en yüksek ÇALIŞAN scale
+# (= mümkün olan en iyi fidelity) bu yüzden seçildi. max_abs_error≈0.133
+# (k=1, matmul, scale=8) — decomposition uyarısı {6,7,8,9,10} taramasının
+# HİÇBİR noktasında görülmedi (0), fatal hatalar hep calibrate_settings
+# aşamasında çıktı, prove sırasında değil.
+scale: 8
+
+# bit_width: KULLANILMIYOR. ezkl==23.0.5'in gerçek Python API'si
+# "bit_width" değil input_scale/param_scale (yukarıdaki "scale" alanı)
+# kullanıyor — bkz. docs/phase_c_calibration.md. Alan geriye dönük
+# uyumluluk için null bırakıldı, hiçbir kod bunu OKUMUYOR.
 bit_width: null
 
-# scale: ezkl "scale" parametresi (sabit noktalı ölçek faktörü).
-scale: null
-
 calibration:
-  # method: ezkl calibrate_settings'e verilecek strateji adı (ör. "resources").
-  method: null
-  # target: kalibrasyon hedefi (ör. "resources" / "accuracy").
-  target: null
+  # method: calibrate_settings'e scales=[scale] kwarg'ı vererek SABİT
+  # scale zorlanıyor. Önceki yöntem ("calibrate SONRASI settings.json'u
+  # elle yamama", force_settings_scale) HİÇBİR ölçekte tutmadı, koddan
+  # kaldırıldı — bkz. docs/phase_c_calibration.md Bulgu 1.
+  method: scales_kwarg
+  # target: calibrate_settings'in ikinci (hedef) parametresi.
+  target: resources

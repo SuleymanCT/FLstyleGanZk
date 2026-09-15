@@ -45,6 +45,21 @@ def parse_anvil_accounts(stdout_text: str) -> list[tuple[str, str]]:
     return list(zip(addresses, keys))
 
 
+def normalize_private_key_hex(private_key: str) -> str:
+    """anvil'in bannerı ve web3.py `0x` ÖNEKLİ private key bekler/kabul eder
+    (bkz. yukarısı, `Web3Client`), ama `ezkl.deploy_evm` bunu KABUL ETMİYOR
+    — Colab'da GERÇEK gözlenen hata: `[eth] Private key must be in hex
+    format, 64 chars, without 0x prefix`. Bu fonksiyon öneki soyup uzunluk/
+    hex-karakter doğrulaması yapar; `Web3Client`/anvil tarafında HİÇBİR ŞEY
+    DEĞİŞTİRMEZ (onlar zaten `0x`'li/`0x`'siz ikisini de kabul ediyor),
+    sadece `deploy_and_verify_via_ezkl_native`'ın `ezkl.deploy_evm`'e
+    verdiği değeri düzeltir."""
+    stripped = private_key[2:] if private_key.lower().startswith("0x") else private_key
+    if len(stripped) != 64 or not all(c in "0123456789abcdefABCDEF" for c in stripped):
+        raise ValueError(f"Geçersiz private key formatı ('0x' hariç 64 hex karakter bekleniyor): {private_key!r}")
+    return stripped
+
+
 class AnvilProcess:
     """`with AnvilProcess() as anvil: ...` — anvil'i başlatır, hazır olana
     kadar bekler, çıkışta güvenle kapatır."""

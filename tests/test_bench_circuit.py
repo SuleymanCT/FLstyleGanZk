@@ -27,6 +27,9 @@ from scripts.bench_circuit import (
     extract_circuit_stats,
     extract_max_abs_error,
     load_bench_results,
+    parse_combo_key,
+    parse_markdown_table_column,
+    parse_only_keys,
     read_realized_scale,
     render_markdown_table,
     save_bench_results,
@@ -54,6 +57,34 @@ def test_combo_key_format():
     assert combo_key({"k": 4, "embed_mode": "gather", "scale": 11}) == "k4_gather_scale11"
 
 
+def test_parse_combo_key_is_inverse_of_combo_key():
+    combo = {"k": 4, "embed_mode": "gather", "scale": 11}
+    assert parse_combo_key(combo_key(combo)) == combo
+
+
+def test_parse_combo_key_rejects_malformed_key():
+    with pytest.raises(ValueError, match="Geçersiz kombinasyon anahtarı"):
+        parse_combo_key("bogus_key")
+
+
+def test_parse_combo_key_rejects_invalid_embed_mode():
+    with pytest.raises(ValueError, match="embed_mode"):
+        parse_combo_key("k4_bogus_scale11")
+
+
+def test_parse_only_keys_parses_comma_separated_list():
+    combos = parse_only_keys("k4_matmul_scale8, k1_matmul_scale8")
+    assert combos == [
+        {"k": 4, "embed_mode": "matmul", "scale": 8},
+        {"k": 1, "embed_mode": "matmul", "scale": 8},
+    ]
+
+
+def test_parse_only_keys_rejects_empty_string():
+    with pytest.raises(ValueError, match="--only"):
+        parse_only_keys("")
+
+
 def test_count_decomposition_warnings_counts_case_insensitive():
     log = "foo\nDecomposition error: integer 123 is too large\nbar\ndecomposition error: integer 999 is too large\n"
     assert count_decomposition_warnings(log) == 2
@@ -66,6 +97,32 @@ def test_count_decomposition_warnings_zero_when_absent():
 def test_extract_max_abs_error_finds_value():
     log = "Numerical Fidelity Report: max_abs_error=0.00033\ndone"
     assert extract_max_abs_error(log) == pytest.approx(0.00033)
+
+
+def test_parse_markdown_table_column_reads_value_below_header():
+    log = (
+        "Numerical Fidelity Report\n"
+        "| mean_error | median_error | max_error | mean_abs_error | max_abs_error | mean_abs_percent_error |\n"
+        "| --- | --- | --- | --- | --- | --- |\n"
+        "| 0.001 | 0.0005 | 0.05 | 0.003 | 0.133 | 12.5 |\n"
+    )
+    assert parse_markdown_table_column(log, "max_abs_error") == pytest.approx(0.133)
+    assert parse_markdown_table_column(log, "mean_abs_percent_error") == pytest.approx(12.5)
+
+
+def test_parse_markdown_table_column_returns_none_when_column_absent():
+    log = "| foo | bar |\n| --- | --- |\n| 1 | 2 |\n"
+    assert parse_markdown_table_column(log, "max_abs_error") is None
+
+
+def test_extract_max_abs_error_finds_value_in_real_pipe_table_format():
+    log = (
+        "[bench_circuit]  gen_witness...\n"
+        "| max_abs_error | mean_abs_error |\n"
+        "| --- | --- |\n"
+        "| 0.133 | 0.02 |\n"
+    )
+    assert extract_max_abs_error(log) == pytest.approx(0.133)
 
 
 def test_extract_max_abs_error_returns_none_when_absent():
