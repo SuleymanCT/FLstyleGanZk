@@ -73,6 +73,32 @@ def parse_k_values(raw: str) -> list[int]:
     return values
 
 
+def register_intermediate_hooks(mapping) -> tuple[dict, list]:
+    """`embed_proj`/`fc0`/`fc1` çıktılarını yakalar — Faz C1'in
+    `scripts/verify_rebuild.py`'sinin katman-bazlı teşhis yapabilmesi
+    için (opsiyonel; alt modül bulunamazsa sessizce atlanır, uydurma
+    değer eklenmez). Çağıran taraf `forward` sonrası handle'ları
+    `remove()` etmeli.
+    """
+    captured: dict = {}
+    handles = []
+
+    def make_hook(name):
+        def hook(_module, _inputs, output):
+            captured[name] = output.detach().cpu()
+
+        return hook
+
+    for attr_name, out_name in (("embed_proj", "embed_proj_out"), ("fc0", "fc0_out"), ("fc1", "fc1_out")):
+        submodule = getattr(mapping, attr_name, None)
+        if submodule is None:
+            print(f"[make_reference_outputs] UYARI: mapping'de '{attr_name}' alt modülü yok, ara çıktı yakalanamayacak.")
+            continue
+        handles.append(submodule.register_forward_hook(make_hook(out_name)))
+
+    return captured, handles
+
+
 def resolve_site_pkl_path(raw_root: str, round_idx: int, site_idx: int) -> str:
     """`scripts.inventory`'nin zaten test edilmiş dizin-tarama
     fonksiyonlarını yeniden kullanır — inventory.json'a bağımlı DEĞİL,
@@ -157,8 +183,18 @@ def main(argv=None) -> int:
         extra_kwargs = resolve_mapping_kwargs(signature, DEFAULT_TRUNCATION_PSI, DEFAULT_TRUNCATION_CUTOFF)
         print(f"[make_reference_outputs] mapping çağrı kwargs: {extra_kwargs}")
 
-        with torch.no_grad():
-            w = mapping(z, c, **extra_kwargs)
+        captured, handles = register_intermediate_hooks(mapping)
+        try:
+            with torch.no_grad():
+                w = mapping(z, c, **extra_kwargs)
+        finally:
+            for handle in handles:
+                handle.remove()
+
+        if captured:
+            print(f"[make_reference_outputs] Yakalanan ara çıktılar: {sorted(captured.keys())}")
+        else:
+            print("[make_reference_outputs] UYARI: hiçbir ara çıktı yakalanamadı (verify_rebuild.py katman-bazlı teşhis yapamayacak).")
 
         print(f"[make_reference_outputs] w şekli: {tuple(w.shape)} dtype={w.dtype}")
 
@@ -172,6 +208,7 @@ def main(argv=None) -> int:
                 "seed": args.seed,
                 "source_pkl": pkl_path,
                 "shard_hash": shard_hash,
+                "intermediates": captured or None,
             },
             out_path,
         )

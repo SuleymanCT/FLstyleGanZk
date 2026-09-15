@@ -201,11 +201,49 @@ sahte çıktı yok.
   gerek yok. `ezkl`/StyleGAN-XL yerelde yok, Colab'da HENÜZ koşulmadı —
   gerçek `w` şekli (beklenen `(k, num_ws, w_dim)`) ve mapping çağrı
   imzası ancak o koşumdan sonra kesinleşir.)
-- **C1** `circuits/rebuild_mapping.py` — shard'dan, StyleGAN-XL'e
-  bağımlı OLMAYAN minimal bir torch modülü kur (sadece Linear,
-  aktivasyon, normalizasyon). Yapıyı `inventory.json`'daki modül
-  ağacından türet. Colab'da üretilecek referans çıktılarla 1e-5 içinde
-  eşleşmeli.
+
+  **C0 sonucu (Colab'da koştu):** `G_ema.mapping.forward` imzası
+  `(z, c, truncation_psi=1.0, truncation_cutoff=None, update_emas=False)`;
+  `w` şekli `(k, 16, 512)`; `z_dim=64, c_dim=5, w_dim=512`; shard
+  prefixleri `mapping, mapping.embed, mapping.embed_proj, mapping.fc0,
+  mapping.fc1`; `round_14/site_0` shard_hash'i `duplicate_check.json`'daki
+  aynı site hash'iyle birebir uyuştu (çapraz doğrulama). Referans
+  dosyaları hazır: `mapping_ref_k{1,4,8}.pt`. Ayrıca
+  `make_reference_outputs.py`'ye geriye uyumlu bir ek yapıldı: artık
+  `embed_proj`/`fc0`/`fc1` çıktılarını `register_forward_hook` ile
+  yakalayıp `"intermediates"` alanına da kaydediyor (C1'in katman-bazlı
+  teşhisi için) — mevcut k1/k4/k8 dosyalarında bu alan yok, yeniden
+  koşulursa eklenir.
+
+- **C1** `circuits/rebuild_mapping.py` — kod yazıldı. StyleGAN-XL'e
+  HİÇ bağımlı değil (`dnnlib`/`torch_utils`/`persistence` import
+  etmiyor, grep ile doğrulandı) — sadece `torch.nn`. Matematik
+  `autonomousvision/stylegan-xl`'in GERÇEK kaynak kodundan (WebFetch ile
+  verbatim çekildi: `networks_stylegan3.py: FullyConnectedLayer` +
+  `MappingNetwork`, `bias_act.py: activation_funcs['lrelu']`) alındı —
+  equalized-lr `weight_gain`/`bias_gain` ölçeklemesi, `lrelu` (alpha=0.2,
+  gain=sqrt(2)) doğru uygulanıyor; `embed_proj` (lr_multiplier=1.0, fc0/
+  fc1'den FARKLI) ile `fc0`/`fc1` (lr_multiplier=0.01) net ayrıştırıldı.
+  Çıkan mimari sabitleri (66048/262656/20544/320000 parametre) Faz A'nın
+  GERÇEK inventory sayılarıyla birebir örtüşüyor (bağımsız çapraz
+  doğrulama). Modül `(k, w_dim)` döner (`(k, num_ws, w_dim)` DEĞİL);
+  truncation/update_emas/broadcast dahil edilmedi (psi=1.0'da devre
+  dışı). `tests/test_rebuild_mapping.py`: sentetik ağırlıklarla, formül
+  `rebuild_mapping`'in kodu çağrılmadan BAĞIMSIZ elle hesaplanıp
+  `atol=1e-6` ile eşleştiği doğrulandı (11 test, hepsi yeşil) — gerçek
+  StyleGAN-XL'e ulaşmadan güçlü bir doğruluk kanıtı, ama KESİN kanıt
+  yine de Colab'daki 1e-5 karşılaştırması.
+
+  `circuits/compare_utils.py` (yeni, saf) ve `scripts/verify_rebuild.py`
+  (yeni, ince orkestrasyon) de yazıldı: shard+referansı yükler,
+  `shard_hash` çapraz kontrolü yapar (yanlış çift karşılaştırmayı
+  önler), referanstaki 16 `num_ws` kopyasının birebir aynı olduğunu
+  doğrular, `max_abs_diff/mean_abs_diff/cosine_similarity` raporlar,
+  eşik (1e-5) aşılırsa katman-bazlı teşhis dener. Sentetik shard+referans
+  ile UÇTAN UCA yerel smoke testi yapıldı (shard_hash eşleşti,
+  max_abs_diff=0.0) — ama bu sentetik ağırlıklarladır, gerçek StyleGAN-XL
+  ağırlıklarıyla `ezkl`/Colab'da HENÜZ koşulmadı.
+
 - **C2** `circuits/export_mapping.py` — ONNX ihracı. Girdi z (k,512),
   c (k,5) one-hot. onnxruntime ve torch farkı < 1e-4, değilse hata.
 - **C3** `circuits/calibrate.py` + `scripts/bench_circuit.py` — ızgara:
