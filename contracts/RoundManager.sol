@@ -2,16 +2,18 @@
 pragma solidity ^0.8.20;
 
 /// @notice ezkl'nin `create_evm_verifier` ile ürettiği Halo2Verifier'ın
-/// arayüzü. GERÇEK imza (parametre adları, `view`/`pure` mi, dönüş tipi)
-/// elimizde net değil — resmi ezkl dokümantasyonundaki genel örnek
-/// (`bool isValid = verifier.verify(proof, publicInputs); require(isValid, ...)`)
-/// baz alınarak bu arayüz varsayıldı. `RoundManager.submitProof`'un
-/// aşağıdaki `try/catch` kullanımı bu belirsizliğe karşı GÜVENLİ: gerçek
-/// kontrat bu imzayla uyuşmazsa (ör. fonksiyon farklı adlandırılmışsa)
-/// çağrı revert eder, `catch` bunu yakalayıp `verified=false` yapar —
-/// yani en kötü ihtimalle her ispat "geçersiz" sayılır (GÜVENLİ başarısızlık
-/// modu), asla yanlış pozitif üretmez. Colab'da gerçek Verifier.sol ile
-/// test edilip (bkz. tests/test_contracts.py) imza doğrulanacak.
+/// arayüzü. Bu imza (`verifyProof(bytes,uint256[]) returns (bool)`)
+/// ARTIK VARSAYIM DEĞİL — Faz D'nin gerçek Colab koşumunda GERÇEK bir
+/// ezkl Verifier.sol'una (14.921 byte deployed bytecode) karşı
+/// `tests/test_contracts.py` ile DOĞRULANDI: geçerli bir ispat kabul
+/// edildi, tek bit bozulmuş bir ispat reddedildi — `try/catch`'in
+/// "güvenli başarısızlık" dalına HİÇ düşülmeden, gerçek `bool` dönüş
+/// değeri üzerinden. `try/catch` yine de KALIYOR (savunma katmanı) —
+/// ezkl farklı bir devre/sürümde bu imzadan sapan bir Verifier üretirse
+/// (ör. `view`/`pure` değişirse ya da dönüş tipi kaldırılırsa) çağrı
+/// revert eder, `catch` bunu yakalayıp `verified=false` yapar; yani en
+/// kötü ihtimalle ispat "geçersiz" sayılır (GÜVENLİ başarısızlık modu),
+/// asla yanlış pozitif üretmez.
 interface IHalo2Verifier {
     function verifyProof(bytes calldata proof, uint256[] calldata publicInputs) external returns (bool);
 }

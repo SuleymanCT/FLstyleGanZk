@@ -571,8 +571,11 @@ gerçek zincir davranışı gözlemleniyor.**)**
 
 ## Faz D (yerel) — Kontratlar ve orkestratör
 
-**durum: kod yazıldı (tüm parçalar), Colab'da HENÜZ koşulmadı/doğrulanmadı.**
-Protokol k=1 ile çalışır (Faz C3'ün EIP-170 bulgusu — bkz. `docs/phase_c_report.md`).
+**durum: tamamlandı.** `tests/test_contracts.py`'nin altı senaryosu da
+(6/6) Colab'da, GERÇEK ezkl ispatlarıyla ve GERÇEK bir Halo2Verifier'a
+karşı doğrulandı — bkz. `docs/phase_d_report.md` (mimari, ölçülen
+değerler, dört veri-biçimi tuzağının tam analizi). Protokol k=1 ile
+çalışır (Faz C3'ün EIP-170 bulgusu — bkz. `docs/phase_c_report.md`).
 
 **ÖNEMLİ TASARIM SAPMASI (kullanıcının orijinal spesifikasyonundan,
 gerekçeli):** `RoundManager.sol` TEK bir sabit `verifier` adresi
@@ -685,12 +688,16 @@ GEREKLİ olduğunu somutlaştırıyor.
   Pahalı ezkl+solc kurulumu modül başına BİR KEZ (`scope="module"`
   fixture), testler arasında paylaşılıyor.
 
-**BİLİNÇLİ TEST SINIRI:** `contracts/RoundManager.sol`, `chain/client.py:
-RoundManagerClient`, `orchestrator/round_runner.py`, `scripts/deploy_contracts.py`,
-`storage/ipfs.py`'nin gerçek IPFS/ezkl/anvil/solc kısımları hiçbiri
-yerelde çalıştırılamaz/test edilemez — SADECE Colab'da
-(`tests/test_contracts.py` + gerçek bir `round_runner.py` koşumu)
-doğrulanabilir. Saf/dosya-tabanlı yardımcılar (`challenge.py`,
+**BİLİNÇLİ TEST SINIRI (güncellendi):** `contracts/RoundManager.sol` +
+`chain/client.py: RoundManagerClient`'in kontrat çağrı yolları artık
+Colab'da GERÇEKTEN doğrulandı (`tests/test_contracts.py`, 6/6). Hâlâ
+yerelde çalıştırılamayan/test edilemeyen (ve HENÜZ Colab'da da gerçek
+bir uçtan uca koşumla doğrulanmamış) kısımlar: `orchestrator/round_runner.py`'nin
+TAM 9 adımlık akışı (gerçek `raw_root` pkl replay'i + gerçek IPFS
+upload/download ile), `scripts/deploy_contracts.py`, `storage/ipfs.py`'nin
+gerçek bir kubo node'una karşı çalışması — bunlar `tests/test_contracts.py`'nin
+kapsamadığı, sentetik/izole test yerine GERÇEK bir round koşumu
+gerektiren parçalar (bkz. Faz E). Saf/dosya-tabanlı yardımcılar (`challenge.py`,
 `schedule.py`, `aggregate.py`, `round_runner.py`'nin `load_progress`/
 `save_progress`/`compute_weight_commitment`/`load_circuit_config`'i,
 `storage/ipfs.py: is_valid_cid`) 40+ testle yerelde GERÇEKTEN doğrulandı.
@@ -767,10 +774,25 @@ hex öneksiz/önekli, bytes, bytearray, eksik anahtar, tek-karakter hex,
 aralık-dışı int, tanınmayan tip), saf, yerelde GERÇEKTEN doğrulandı
 (241 passed, 2 skipped toplam).
 
-**Kabul:** testler yeşil, gas rakamları raporlandı. **HENÜZ KARŞILANMADI**
-— Colab'da `tests/test_contracts.py`'nin TAMAMI (bu üç düzeltmeyle,
-özellikle mutlu yol testi) koşulup gerçek gas/zaman rakamları
-raporlanana kadar bu faz "tamamlandı" sayılmayacak.
+**4. Colab koşumu — 6/6 test geçti, Faz D TAMAMLANDI:** `IHalo2Verifier.verifyProof(bytes,uint256[])
+returns (bool)` imza VARSAYIMI, GERÇEK ezkl Verifier.sol'una karşı
+TUTTU — `try/catch` hiçbir zaman "güvenli başarısızlık" dalına
+düşmeden, gerçek `bool` dönüş değeri üzerinden çalıştı. Mutlu yol dahil
+altı senaryonun TAMAMI (geçerli ispat kabulü, tek-bit-bozuk ispat
+reddi + itibar düşüşü, eşik-altı dışlama, çift gönderim reddi, kayıtsız
+site reddi, doğrulanmamış site'nin finalizeRound'a alınamaması) gerçek
+revert mesajlarıyla doğrulandı. Ölçülen: RoundManager deployed bytecode
+6.867 B, Verifier (test devresi) 14.921 B — gerçek k=1/matmul/scale=8
+devresinin verifier'ına (14.929 B, Faz C3) neredeyse özdeş boyutta.
+`contracts/RoundManager.sol`'daki `IHalo2Verifier` yorumu artık "varsayım"
+değil "DOĞRULANDI" diyor; `try/catch` savunma katmanı olarak kalıyor.
+Tam analiz + dört veri-biçimi tuzağının (gasPrice/EIP-1559 çakışması,
+public_inputs little-endian iç içe liste, proof int listesi,
+ContractLogicError'ın estimate_gas aşamasında oluşması) makale-hazır
+anlatımı: `docs/phase_d_report.md`.
+
+**Kabul: KARŞILANDI** — testler yeşil (6/6), gas rakamları raporlandı
+(`docs/phase_d_report.md`).
 
 ## Faz E (yerel + Colab) — Replay
 
