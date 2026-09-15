@@ -796,13 +796,60 @@ anlatımı: `docs/phase_d_report.md`.
 
 ## Faz E (yerel + Colab) — Replay
 
-**durum: yapılmadı**
+**durum: kod yazıldı, Colab'da HENÜZ koşulmadı/doğrulanmadı.**
 
-`scripts/replay_proofs.py`: mevcut 15 round shard'ları üzerinde, hiç
-eğitim yapmadan ispat takvimini koştur. İki mod: tam (her round her
-site) ve kademeli. Süre, boyut, doğrulama, gas karşılaştırması.
+`scripts/replay_proofs.py`: mevcut 15 round'un 60 shard'ı (`{shards_dir}/round_N/site_M.pt`,
+Faz A çıktısı) üzerinde, HİÇ EĞİTİM YAPMADAN (CLAUDE.md madde 2/3),
+ispat takvimini koşturur. İki mod: `"full"` (her round × her site = 60
+ispat, karşılaştırma tabanı) ve `"staged"` (`orchestrator/schedule.py`'nin
+takvimi: sabit turlar + rastgele seçim + itibar tetikli zorunlu ispat).
+Devre parametreleri `configs/circuit.yaml` (k=1, matmul, scale=8 — Faz
+C3), itibar/takvim parametreleri `configs/schedule.yaml`'dan (Faz D).
 
-**Kabul:** maliyet karşılaştırma tablosu üretildi.
+Mimari `scripts/bench_circuit.py`'nin (Faz C3) alt-süreç deseniyle
+BİREBİR aynı gerekçelerle kuruldu (tepe RAM izolasyonu, ezkl'nin Rust
+loglarının güvenilir yakalanması, çökme/panik izolasyonu) — GERÇEK ispat/
+deploy/submit mantığı `orchestrator.round_runner.generate_and_submit_proof`'u
+(Faz D'de `tests/test_contracts.py` ile doğrulanmış) DOĞRUDAN çağırır,
+hiçbir ezkl/solc/chain adımı yeniden yazılmadı. Bu fonksiyon bu turda
+GENİŞLETİLDİ: artık `pk_size_bytes`/`vk_size_bytes`/`proof_size_bytes`/
+`circuit_stats`/`deployed_bytecode_size`/`solc_compile` süresi/`w_abs_max`
+(bağıl hata hesabı için) de döndürüyor — hem `round_runner.py` hem
+`replay_proofs.py` bundan yararlanıyor.
+
+**anvil TEK bir süreçte, TÜM koşum boyunca canlı kalıyor** (her ispat
+için yeniden başlatılmıyor) — `RoundManager` bir kez deploy ediliyor,
+her round için GERÇEK bir `startRound` çağrısıyla GERÇEK bir
+`challengeSeed` alınıyor. **"staged" modda hangi site'ların ispat
+üreteceği ÖNCEDEN hesaplanamıyor** — `must_prove`'un rastgele bileşeni
+GERÇEK `challengeSeed`'e bağlı olduğundan (o da GERÇEK `startRound`
+çağrısı yapılmadan bilinemez), takvim kararı her round için GERÇEK
+`challengeSeed` alındıktan HEMEN SONRA, çalışma zamanında veriliyor.
+
+Dayanıklılık: `progress`/sonuç dosyası her ispattan sonra atomic
+yazılıyor (`--force` verilmedikçe zaten tamamlanmış kombinasyonlar
+atlanıyor), bir ispat çökerse/panikler se `status`/`error_summary` ile
+işaretlenip diğerlerine devam ediliyor, `--keep-artifacts` yoksa büyük
+ara dosyalar (pk, derlenmiş devre, witness) her ispattan sonra siliniyor,
+`--only-first`/`--limit N` ile küçük ölçekte önce denenebiliyor.
+
+Saf yardımcılar (`parse_int_range`, `replay_combo_key`, `compute_mode_totals`,
+`render_mode_comparison_table`, `render_staged_distribution`) 13 testle
+yerelde GERÇEKTEN doğrulandı (254 passed, 2 skipped toplam). ezkl/anvil/
+solc/gerçek shard gerektiren kısımlar (`run_worker`, `main`'in chain
+dalı) BİLİNÇLİ TEST SINIRI içinde — sadece Colab'da doğrulanabilir.
+
+Çıktı `{zk_root}/replay/replay_results_<mod>.json` + `docs/phase_e_replay.md`
+— HER İKİSİ de script TARAFINDAN üretilir (elle yazılmadı, CLAUDE.md
+madde 6 gereği gerçek veri olmadan rapor uydurulmuyor); `docs/phase_e_replay.md`
+sadece o ana kadar koşulmuş mod(lar)ın GERÇEK sonuçlarını içerir, eksik
+mod için "-" (tasarruf sütunu) ya da açık bir "henüz koşulmadı" notuyla
+dürüstçe boş bırakılır.
+
+**Kabul:** maliyet karşılaştırma tablosu üretildi. **HENÜZ KARŞILANMADI**
+— Colab'da önce `--mode full --only-first`, sonra tam `--mode full` ve
+`--mode staged` koşulup gerçek `docs/phase_e_replay.md` üretilene kadar
+bu faz "tamamlandı" sayılmayacak.
 
 ## Faz F (Colab) — Saldırılar ve canlı koşu
 

@@ -139,6 +139,12 @@ def generate_and_submit_proof(
     model = build_pruned_mapping_network(mapping_shard, num_classes=c_dim, embed_mode=circuit_config["embed_mode"])
     model.eval()
 
+    # w'nin gerçek büyüklüğü — çağıran taraf (ör. scripts/replay_proofs.py)
+    # max_abs_error'u buna oranlayıp bağıl hatayı raporluyor (Faz C3'teki
+    # aynı desen, bkz. scripts/bench_circuit.py: max_abs_error_relative_pct).
+    with torch.no_grad():
+        w_abs_max = model(z, c).abs().max().item()
+
     onnx_path = work_dir / f"mapping_round{round_id}_{site}.onnx"
     export_to_onnx(model, z, c, str(onnx_path), opset_version=13)
 
@@ -149,7 +155,9 @@ def generate_and_submit_proof(
     prove_result = run_prove_and_verify(input_json_path, setup_result["paths"], work_dir)
 
     sol_path, _abi_path = generate_solidity_verifier(setup_result["paths"], work_dir)
+    t0 = time.perf_counter()
     compiled_verifier = compile_verifier_solidity(sol_path)
+    solc_compile_seconds = time.perf_counter() - t0
     if compiled_verifier["exceeds_eip170"]:
         raise RuntimeError(
             f"[round_runner] round={round_id} site={site}: verifier bytecode EIP-170'i AŞIYOR "
@@ -178,7 +186,16 @@ def generate_and_submit_proof(
         "deploy_gas": deploy_gas,
         "submit_gas": submit_gas,
         "verified": verified,
-        "timings": {**setup_result["timings"], **prove_result["timings"]},
+        "timings": {**setup_result["timings"], **prove_result["timings"], "solc_compile": solc_compile_seconds},
+        "circuit_stats": setup_result["circuit_stats"],
+        "requested_scale": setup_result["requested_scale"],
+        "realized_scale": setup_result["realized_scale"],
+        "pk_size_bytes": setup_result["pk_size_bytes"],
+        "vk_size_bytes": setup_result["vk_size_bytes"],
+        "proof_size_bytes": prove_result["proof_size_bytes"],
+        "deployed_bytecode_size": compiled_verifier["deployed_bytecode_size"],
+        "used_solc_strategy": compiled_verifier.get("used_strategy"),
+        "w_abs_max": w_abs_max,
     }
 
 
