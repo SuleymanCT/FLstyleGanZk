@@ -182,11 +182,15 @@ sahte çıktı yok.
 
 ## Faz C (yerel + Colab) — Gerçek mapping devresi
 
-**durum: C0/C1/C2/C3 Colab'da tamamlandı ve doğrulandı (bkz. aşağıdaki
-notlar + `docs/phase_c_report.md`); C4 (kuantizasyon etkisi) yapılmadı.**
-Operasyonel devre parametreleri `configs/circuit.yaml`'a yazıldı:
-`challenge_size_k=1`, `embed_mode=matmul`, `scale=8` — gerekçeler C3
-notunda ve dosyanın kendi yorumlarında.
+**durum: tamamlandı.** C0/C1/C2/C3 Colab'da tam olarak koştu ve
+doğrulandı (bkz. aşağıdaki notlar + `docs/phase_c_report.md`, kapanış
+raporu). Operasyonel devre parametreleri `configs/circuit.yaml`'a
+yazıldı: `challenge_size_k=1`, `embed_mode=matmul`, `scale=8` —
+gerekçeler C3 notunda ve dosyanın kendi yorumlarında. (C4 —
+kuantizasyon etkisinin DR sınıfı başına ayrıntılı analizi — bu kapsamın
+dışında bırakıldı, ayrı bir iş olarak ele alınabilir; Faz C'nin ana
+kabul kriteri zaten C3'te karşılandı.) **Sıradaki faz: Faz D
+(kontratlar ve orkestratör, k=1 protokolüyle).**
 
 - **C0** `scripts/make_reference_outputs.py` — kod yazıldı (yeni:
   `fl/reference_utils.py` (saf, yerelde test edildi: `build_class_indices`,
@@ -481,11 +485,25 @@ notunda ve dosyanın kendi yorumlarında.
   sınırı aşıyorsa deploy HİÇ DENENMİYOR, `status="eip170_exceeded"`
   (`"failed"`den ayrı) işaretleniyor (eskiden EIP-170'in DOĞAL deploy
   reddi yanlışlıkla "solc başarısız" sanılıp ezkl'nin native
-  `deploy_evm`'ine düşürülüyordu — asıl kök sebep buydu). Bu iki
-  düzeltme Colab'da HENÜZ yeniden doğrulanmadı.
+  `deploy_evm`'ine düşürülüyordu — asıl kök sebep buydu).
+
+  **DOĞRULANDI (3. tur, `--only k4_matmul_scale8,k8_matmul_scale8 --force`):**
+  temiz sonuç — k4 ve k8, `status="eip170_exceeded"`, `error_summary=None`.
+  Ne private-key ne url-parse hatası; deploy hiç denenmedi. **Faz C3
+  KAPANDI.** Operasyonel yapılandırmanın (k=1, matmul, scale=8) nihai
+  ölçümü: setup 37.3s, prove 37.4s, tepe RAM 7.2GB, proof 96KB,
+  verifier bytecode 14.929B, `verify_gas=1.174.788` (zincir üstü
+  doğrulandı), bağıl hata %3,21 — tam tablo `docs/phase_c_report.md`'nin
+  başında. **NOT:** k4/k8'in `gather` varyantları yeniden koşulmadı,
+  `bench_results.json`'da hâlâ eski private-key hatalı `"failed"`
+  durumunda — ama zaten `matmul` ile aynı k'de bytecode boyutu neredeyse
+  özdeş ve EIP-170'i AŞIYOR, yeniden koşulsa da sonuç değişmez
+  (`eip170_exceeded` olurdu); Faz C'nin kapanışını etkilemiyor,
+  istenirse ayrıca doğrulanabilir.
 
 - **C4** Kuantizasyon etkisi: w_q ve fp32 w arasında kosinüs benzerliği
-  ve L2 farkı, DR sınıfı başına ayrı.
+  ve L2 farkı, DR sınıfı başına ayrı. **Faz C'nin kapsamı dışında
+  bırakıldı** — ayrı bir iş olarak ele alınabilir.
 
 **Kabul:** en az bir (k, bit) kombinasyonu 30 dk altında ispat
 üretiyor. **KARŞILANDI** — k=1, matmul, scale=8: setup 36.0s + prove

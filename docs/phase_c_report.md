@@ -1,10 +1,36 @@
 # Faz C3 Raporu — Tam Benchmark Izgarası (30 Kombinasyon)
 
-Bu rapor `scripts/bench_circuit.py`'nin Colab'daki tam ızgara koşumunun
-(k ∈ {1,4,8} × embed_mode ∈ {matmul,gather} × scale ∈ {6,7,8,9,10} = 30
-kombinasyon) gerçek çıktısına dayanır. `docs/phase_c_calibration.md`
-(kalibrasyon teşhisi) bu raporun ön koşuludur — burada anlatılanlar o
-teşhisin ÜZERİNE, tam ızgara sonucudur.
+**Durum: Faz C TAMAMLANDI.** Bu rapor `scripts/bench_circuit.py`'nin
+Colab'daki tam ızgara koşumunun (k ∈ {1,4,8} × embed_mode ∈
+{matmul,gather} × scale ∈ {6,7,8,9,10} = 30 kombinasyon) ve ardından
+gelen iki hedefli doğrulama turunun (bkz. "Üç hata ve düzeltmeleri")
+gerçek çıktısına dayanır. `docs/phase_c_calibration.md` (kalibrasyon
+teşhisi) bu raporun ön koşuludur.
+
+## Operasyonel yapılandırma ve ölçülen değerler (k=1, matmul, scale=8)
+
+Nihai doğrulama koşumunda (`--only k1_matmul_scale8`) ölçülen, üretim
+yapılandırmasının (`configs/circuit.yaml`) tam sonucu:
+
+| Metrik | Değer |
+|---|---:|
+| challenge_size_k | 1 |
+| embed_mode | matmul |
+| scale (input_scale=param_scale) | 8 |
+| setup süresi | 37.3 s |
+| prove süresi | 37.4 s |
+| tepe RAM | 7.2 GB |
+| proof boyutu | 96 KB |
+| verifier deployed bytecode | 14.929 B (EIP-170'in %60,7'si) |
+| verify_gas (zincir üstü, DOĞRULANDI) | 1.174.788 |
+| max_abs_error (bağıl) | %3,21 |
+| decomposition uyarısı | 0 |
+| durum | `success`, zincir üstü doğrulama `verified=True` |
+
+Bu tablo, aşağıdaki bölümlerin dayandığı ilk (30 kombinasyonluk) koşumun
+sayılarından ufak farklar (ör. prove 37.1s→37.4s, verify_gas
+1.174.812→1.174.788) taşıyabilir — ayrı bir Colab VM koşumunun doğal
+değişkenliği (gas/zamanlama, nonce vb.), bulguları DEĞİŞTİRMİYOR.
 
 ## Özet: ölçek tavanı, embed_mode farkı, EIP-170 sınırı
 
@@ -165,11 +191,19 @@ DENENMİYOR" satırı yazılıyor. `deploy_and_verify_via_ezkl_native`
 fallback'i artık SADECE solc'un GERÇEKTEN (boyuttan bağımsız bir
 sebeple) tamamen başarısız olduğu durumda tetikleniyor.
 
-**Not — bu iki değişiklik (kwarg çağrısı + EIP-170 ön-kontrolü) kod
-seviyesinde yapıldı, Colab'da HENÜZ yeniden koşulup doğrulanmadı**
-(bir sonraki `--only k4_matmul_scale8,k8_matmul_scale8 --force` koşumu
-bunu netleştirecek — beklenen: `status="eip170_exceeded"`, hiçbir
-deploy denemesi/hatası olmadan).
+**DOĞRULANDI (`--only k4_matmul_scale8,k8_matmul_scale8 --force`):**
+her iki kombinasyon da temiz bir şekilde `status="eip170_exceeded"`,
+`error_summary=None` verdi — ne private-key ne url-parse hatası, deploy
+hiç denenmedi. Beklenen davranış TAM olarak gerçekleşti.
+
+**NOT — k4/k8'in `gather` varyantları YENİDEN koşulmadı**, `bench_results.json`'da
+hâlâ eski (private-key hatalı) `"failed"` durumunda duruyorlar. Bunun
+sonucu ETKİLEMEYECEĞİNİ biliyoruz: `matmul` ile aynı k'de bytecode boyutu
+neredeyse özdeş (26.758/32.142 vs 26.757/32.144 — yukarıdaki "EIP-170:
+deployed bytecode ve aşım durumu" tablosu) ve zaten EIP-170'i AŞIYOR,
+yani yeniden koşulsalar da sonuç aynı şekilde `eip170_exceeded` olurdu.
+İstenirse `--only k4_gather_scale8,k8_gather_scale8 --force` ile ayrıca
+doğrulanabilir, ama Faz C'nin kapanışını beklemiyor.
 
 ### 2. `max_abs_error`/`max_abs_error_%` tabloda boştu
 
