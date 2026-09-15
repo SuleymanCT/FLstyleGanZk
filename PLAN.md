@@ -184,6 +184,23 @@ sahte çıktı yok.
 
 **durum: yapılmadı**
 
+- **C0** `scripts/make_reference_outputs.py` — kod yazıldı (yeni:
+  `fl/reference_utils.py` (saf, yerelde test edildi: `build_class_indices`,
+  `build_z_c`, `resolve_mapping_kwargs`) + ince orkestrasyon script'i.
+  `round_14/site_0`'ın (varsayılan, `--round`/`--site` ile değişebilir)
+  gerçek `G_ema.mapping`'ini sabit tohumdan üretilen k∈{1,4,8} adet
+  (z,c) ile çalıştırıp `w`'yi `{zk_root}/reference/mapping_ref_k{k}.pt`
+  içine `{z,c,w,seed,source_pkl,shard_hash}` olarak kaydediyor.
+  `shard_hash`, TAM G'nin değil sadece mapping+embedding shard'ının
+  `canonical_hash`'i (C1'in karşılaştıracağı doğru kimlik).
+  `G_ema.mapping.forward`'ın `inspect.signature`'ı loglanıyor,
+  `truncation_psi`/`truncation_cutoff` sadece imzada GERÇEKTEN varsa
+  gönderiliyor (varsayım yok). Boyutlar (z_dim/c_dim/w_dim/num_ws) ve
+  mapping/embedding prefixleri inventory.json'dan değil CANLI G_ema'dan
+  okunuyor — script self-contained, Faz A1'in ayrıca koşmuş olmasına
+  gerek yok. `ezkl`/StyleGAN-XL yerelde yok, Colab'da HENÜZ koşulmadı —
+  gerçek `w` şekli (beklenen `(k, num_ws, w_dim)`) ve mapping çağrı
+  imzası ancak o koşumdan sonra kesinleşir.)
 - **C1** `circuits/rebuild_mapping.py` — shard'dan, StyleGAN-XL'e
   bağımlı OLMAYAN minimal bir torch modülü kur (sadece Linear,
   aktivasyon, normalizasyon). Yapıyı `inventory.json`'daki modül
