@@ -19,6 +19,7 @@ edilemez — sadece Colab'da gerçek koşumda doğrulanabilir.
 from __future__ import annotations
 
 from web3 import Web3
+from web3.exceptions import ContractLogicError
 
 from chain.anvil import normalize_private_key_hex
 
@@ -188,7 +189,19 @@ class RoundManagerClient(Web3Client):
         # (bkz. _build_tx docstring'i — bu satırlar TAM BURADA eskiden
         # "gasPrice" ekleyip Faz D'nin gerçek Colab koşumunda
         # "TypeError: Unknown kwargs: ['gasPrice']" hatasına yol açmıştı).
-        tx = fn_call.build_transaction({"from": account.address})
+        # `build_transaction()`, "gas" verilmediği için KENDİSİ bir
+        # `estimate_gas` simülasyonu çalıştırır — kontrat `require`'ı
+        # reddederse (`onlyOwner`/`onlyRegisteredSite`/çift gönderim vb.)
+        # işlem HİÇ ZİNCİRE GÖNDERİLMEDEN, burada `ContractLogicError`
+        # olarak patlar (Faz D'nin gerçek Colab koşumunda gözlendi —
+        # `receipt["status"] != 1` kontrolüne hiç ulaşılmıyordu). Revert
+        # mesajı KORUNARAK net bir `RuntimeError`'a çevriliyor — aşağıdaki
+        # "status=0" durumuyla AYNI mesaj öneki, çağıran tarafın (ve
+        # testlerin) tek bir hata tipine bakmasını sağlıyor.
+        try:
+            tx = fn_call.build_transaction({"from": account.address})
+        except ContractLogicError as e:
+            raise RuntimeError(f"[RoundManagerClient] İşlem başarısız (revert): {e}") from e
         tx = _build_tx(self.w3, tx, account.address)
         signed = account.sign_transaction(tx)
         tx_hash = self.w3.eth.send_raw_transaction(_raw_transaction_bytes(signed))

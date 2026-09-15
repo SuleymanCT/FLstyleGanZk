@@ -41,6 +41,7 @@ from chain.anvil import AnvilProcess  # noqa: E402
 from chain.client import RoundManagerClient, Web3Client  # noqa: E402
 from chain.solc import compile_with_fallback_strategies  # noqa: E402
 from circuits.export_mapping import export_to_onnx  # noqa: E402
+from circuits.ezkl_utils import parse_public_inputs  # noqa: E402
 from circuits.rebuild_mapping import build_pruned_mapping_network  # noqa: E402
 from circuits.toy_pipeline import compile_verifier_solidity, generate_solidity_verifier  # noqa: E402
 from scripts.bench_circuit import build_multi_input_json, run_ezkl_pipeline, run_prove_and_verify, write_json_file  # noqa: E402
@@ -100,7 +101,7 @@ def _shared_setup():
         with open(prove_result["proof_path"], encoding="utf-8") as f:
             proof_json = json.load(f)
         proof_bytes = bytes.fromhex(proof_json["proof"].removeprefix("0x")) if isinstance(proof_json["proof"], str) else proof_json["proof"]
-        public_inputs = proof_json.get("instances") or proof_json.get("public_inputs") or []
+        public_inputs = parse_public_inputs(proof_json)
 
         sol_path, _abi_path = generate_solidity_verifier(setup_result["paths"], work_dir)
         compiled_verifier = compile_verifier_solidity(sol_path)
@@ -218,8 +219,14 @@ def test_double_submit_update_rejected(_shared_setup):
     round_id = 300
     rm.start_round(round_id, "QmGlobalCID", (0).to_bytes(32, "big"), owner_key)
     rm.submit_update(round_id, "QmUpdateCID1", (1).to_bytes(32, "big"), site_key)
-    with pytest.raises(RuntimeError, match="İşlem başarısız"):
+    # build_transaction() "onlyRegisteredSite"/cift-gonderim require'ini
+    # gas tahmini sirasinda tespit edip ContractLogicError firlatir -
+    # islem ZINCIRE HIC GONDERILMEZ (receipt.status==0 DEGIL). chain/client.py
+    # bunu yakalayip revert MESAJINI KORUYARAK bir RuntimeError'a ceviriyor -
+    # hem genel onek hem KONTRATIN GERCEK metni dogrulaniyor.
+    with pytest.raises(RuntimeError, match="İşlem başarısız") as exc_info:
         rm.submit_update(round_id, "QmUpdateCID2", (2).to_bytes(32, "big"), site_key)
+    assert "zaten gonderim yapildi" in str(exc_info.value)
 
 
 def test_unregistered_site_rejected(_shared_setup):
@@ -228,8 +235,9 @@ def test_unregistered_site_rejected(_shared_setup):
 
     round_id = 400
     rm.start_round(round_id, "QmGlobalCID", (0).to_bytes(32, "big"), owner_key)
-    with pytest.raises(RuntimeError, match="İşlem başarısız"):
+    with pytest.raises(RuntimeError, match="İşlem başarısız") as exc_info:
         rm.submit_update(round_id, "QmUpdateCID", (1).to_bytes(32, "big"), unregistered_key)
+    assert "kayitli site degil" in str(exc_info.value)
 
 
 def test_unverified_site_cannot_be_included_in_finalize_round(_shared_setup):
@@ -245,5 +253,6 @@ def test_unverified_site_cannot_be_included_in_finalize_round(_shared_setup):
     verified, _gas = rm.submit_proof(round_id, s["verifier_address"], bytes(corrupted), s["public_inputs"], site_key)
     assert verified is False
 
-    with pytest.raises(RuntimeError, match="İşlem başarısız"):
+    with pytest.raises(RuntimeError, match="İşlem başarısız") as exc_info:
         rm.finalize_round(round_id, "QmAggregateCID", [site], owner_key)
+    assert "dogrulanmamis site finalizeRound'a dahil edilemez" in str(exc_info.value)

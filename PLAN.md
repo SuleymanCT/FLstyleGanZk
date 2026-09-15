@@ -714,9 +714,40 @@ artık HEPSİ bu tek yoldan geçiyor. `tests/test_client.py` (6 test,
 sentetik `w3` nesnesiyle) bu iki gas biçiminin ASLA bir arada
 üretilmediğini yerelde GERÇEKTEN kanıtlıyor.
 
+**2. Colab koşumu — deploy_contract düzeldi, kontrat mantığı GERÇEKTEN
+çalıştığı doğrulandı** (gerçek revert mesajları görüldü: "RoundManager:
+bu round'a zaten gonderim yapildi", "RoundManager: kayitli site degil").
+İki kalan sorun düzeltildi:
+
+- **`public_inputs` tipi:** `proof.json`'daki `instances` iç içe liste,
+  elemanlar hex string VE **LITTLE-ENDIAN** (`int(x,16)` ile okunursa
+  devasa/yanlış bir sayı çıkıyordu — kontrat `uint256[]` beklerken
+  `"Argument 4 value [...] is not compatible with type uint256[]"` hatası
+  çıktı). **Düzeltme:** `circuits/ezkl_utils.py: parse_public_inputs`
+  (yeni) — iç içe listeyi düzleştirir, hem little hem big-endian
+  yorumunu hesaplayıp HANGİSİ BN254 skalar alanının (`BN254_SCALAR_FIELD_MODULUS`)
+  İÇİNDE kalıyorsa onu kullanır (VARSAYMAZ, DOĞRULAR), ikisi de dışarıda
+  kalırsa `ValueError`, zaten `int` olan elemanları olduğu gibi bırakır.
+  `orchestrator/round_runner.py` ve `tests/test_contracts.py`'nin
+  fragile inline ayrıştırması bununla değiştirildi. 14 test (little/big-
+  endian ayırt etme, düz/iç-içe liste, zaten-int, karışık/eksik şema),
+  saf, yerelde GERÇEKTEN doğrulandı.
+- **Beklenen hata tipi:** testler `RuntimeError(match="İşlem başarısız")`
+  bekliyordu ama web3 `ContractLogicError` fırlatıyordu — GAS TAHMİNİ
+  aşamasında (`build_transaction()`'ın kendi iç `estimate_gas`
+  simülasyonu revert'i doğrudan yakalıyor), işlem hiç zincire
+  GÖNDERİLMEDEN. **Düzeltme:** `chain/client.py: RoundManagerClient._send`
+  artık `fn_call.build_transaction(...)`'ı `try/except ContractLogicError`
+  ile sarıyor, revert mesajını KORUYARAK (`str(e)`) aynı "İşlem başarısız"
+  önekiyle `RuntimeError`'a çeviriyor — çağıran taraf (ve testler) TEK
+  bir hata tipine bakabiliyor. `tests/test_contracts.py`'nin üç reddetme
+  testi artık sadece hata TİPİNİ değil, kontratın GERÇEK revert
+  metnini de (`"zaten gonderim yapildi"`, `"kayitli site degil"`,
+  `"dogrulanmamis site finalizeRound'a dahil edilemez"`) doğruluyor.
+
 **Kabul:** testler yeşil, gas rakamları raporlandı. **HENÜZ KARŞILANMADI**
-— Colab'da `tests/test_contracts.py`'nin TAMAMI koşulup (bu düzeltmeyle)
-gerçek gas/zaman rakamları raporlanana kadar bu faz "tamamlandı"
+— Colab'da `tests/test_contracts.py`'nin TAMAMI (bu iki düzeltmeyle)
+koşulup gerçek gas/zaman rakamları raporlanana kadar bu faz "tamamlandı"
 sayılmayacak.
 
 ## Faz E (yerel + Colab) — Replay

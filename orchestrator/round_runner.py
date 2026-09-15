@@ -129,6 +129,7 @@ def generate_and_submit_proof(
     from chain.client import Web3Client
     from chain.solc import EIP170_MAX_DEPLOYED_BYTECODE_SIZE
     from circuits.export_mapping import export_to_onnx
+    from circuits.ezkl_utils import parse_public_inputs
     from circuits.rebuild_mapping import build_pruned_mapping_network, verify_prunable_embed_rows
     from circuits.toy_pipeline import compile_verifier_solidity, generate_solidity_verifier
     from scripts.bench_circuit import run_ezkl_pipeline, run_prove_and_verify
@@ -159,17 +160,19 @@ def generate_and_submit_proof(
     deploy_client = Web3Client(round_manager_client.rpc_url)
     verifier_address, deploy_gas = deploy_client.deploy_bytecode(compiled_verifier["bytecode"], private_key)
 
-    # VARSAYIM (Colab'da doğrulanacak): ezkl'nin proof.json şeması
-    # {"proof": "0x...", "instances"/"public_inputs": [...]} - Faz B/C
-    # boyunca proof.json'un İÇERİĞİ hiç ayrıştırılmadı (sadece varlığı
-    # kontrol edildi, `ezkl.verify`'e dosya yolu olarak verildi). Zincire
-    # göndermek için burada İLK KEZ içerik ayrıştırılıyor.
+    # proof.json'un İÇERİĞİ Faz B/C boyunca hiç ayrıştırılmadı (sadece
+    # varlığı kontrol edilip ezkl.verify'e dosya yolu olarak verildi).
+    # Zincire göndermek için burada İLK KEZ ayrıştırılıyor. `instances`
+    # LITTLE-ENDIAN hex string'ler olarak geldi (Faz D'nin gerçek Colab
+    # koşumunda gözlendi) — `parse_public_inputs` bunu VARSAYMAZ, BN254
+    # skalar alanına göre doğrulayıp hangi endianness'ın geçerli
+    # olduğunu loglar (bkz. circuits/ezkl_utils.py).
     with open(prove_result["proof_path"], encoding="utf-8") as f:
         proof_json = json.load(f)
     if "proof" not in proof_json:
         raise KeyError(f"proof.json'da 'proof' anahtarı yok. Bulunan anahtarlar: {sorted(proof_json.keys())}")
     proof_bytes = bytes.fromhex(proof_json["proof"].removeprefix("0x")) if isinstance(proof_json["proof"], str) else proof_json["proof"]
-    public_inputs = proof_json.get("instances") or proof_json.get("public_inputs") or []
+    public_inputs = parse_public_inputs(proof_json)
 
     verified, submit_gas = round_manager_client.submit_proof(round_id, verifier_address, proof_bytes, public_inputs, private_key)
 

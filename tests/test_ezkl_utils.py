@@ -1,6 +1,8 @@
 import asyncio
 
-from circuits.ezkl_utils import run_async
+import pytest
+
+from circuits.ezkl_utils import BN254_SCALAR_FIELD_MODULUS, parse_public_inputs, run_async
 
 
 def test_run_async_with_sync_function():
@@ -35,3 +37,74 @@ def test_run_async_propagates_exceptions():
         assert "kaboom" in str(e)
     else:
         raise AssertionError("ValueError bekleniyordu")
+
+
+def _little_hex(value: int, num_bytes: int = 32) -> str:
+    return value.to_bytes(num_bytes, "little").hex()
+
+
+def _big_hex(value: int, num_bytes: int = 32) -> str:
+    return value.to_bytes(num_bytes, "big").hex()
+
+
+def test_parse_public_inputs_detects_little_endian_correctly():
+    # ezkl'nin Faz D'nin gerçek Colab koşumunda gözlenen biçimi:
+    # little-endian saklanmış hex string (int(x, 16) ile okunursa devasa,
+    # yanlış bir sayı üretir).
+    assert parse_public_inputs({"instances": [[_little_hex(6)]]}) == [6]
+
+
+def test_parse_public_inputs_detects_big_endian_when_that_is_the_valid_one():
+    # 200: son bayta sığıyor ama little-endian yanlış okuması (200 * 2^248)
+    # BN254 alanının DIŞINA taşıyor - bu yüzden big-endian yorumu TEK
+    # geçerli seçenek olur (42 gibi küçük değerlerde HER İKİ yorum da
+    # yanlışlıkla alan içinde kalabiliyor, bu test o belirsizliği önlüyor).
+    assert parse_public_inputs({"instances": [[_big_hex(200)]]}) == [200]
+
+
+def test_parse_public_inputs_flattens_nested_lists():
+    values = [1, 2, 3, 4, 5]
+    result = parse_public_inputs({"instances": [[_little_hex(v) for v in values]]})
+    assert result == values
+
+
+def test_parse_public_inputs_handles_flat_list_not_nested():
+    values = [7, 8]
+    result = parse_public_inputs({"public_inputs": [_little_hex(v) for v in values]})
+    assert result == values
+
+
+def test_parse_public_inputs_passes_through_already_int_values():
+    assert parse_public_inputs({"instances": [[1, 2, 3]]}) == [1, 2, 3]
+
+
+def test_parse_public_inputs_real_colab_shape_five_little_endian_instances():
+    # Faz D'nin gerçek Colab koşumunda gözlenen şekil: tek elemanlı dış
+    # liste, 5 elemanlı iç liste, hepsi little-endian hex string.
+    field_element = BN254_SCALAR_FIELD_MODULUS - 12345  # gerçekçi büyüklükte, alan içi bir değer
+    values = [0, field_element, 1, 1, 6]
+    result = parse_public_inputs({"instances": [[_little_hex(v) for v in values]]})
+    assert result == values
+    assert all(0 <= v < BN254_SCALAR_FIELD_MODULUS for v in result)
+
+
+def test_parse_public_inputs_raises_when_neither_endianness_is_valid():
+    # 40 baytlık (32'den uzun) bir değer - ne little ne big-endian yorumu
+    # BN254 alanının altında kalır.
+    garbage = "ff" * 40
+    with pytest.raises(ValueError, match="skalar alanının"):
+        parse_public_inputs({"instances": [[garbage]]})
+
+
+def test_parse_public_inputs_raises_on_missing_keys():
+    with pytest.raises(KeyError, match="instances"):
+        parse_public_inputs({"proof": "0xdead"})
+
+
+def test_parse_public_inputs_raises_on_mixed_types():
+    with pytest.raises(TypeError):
+        parse_public_inputs({"instances": [[1, "not-consistent"]]})
+
+
+def test_parse_public_inputs_empty_instances_returns_empty_list():
+    assert parse_public_inputs({"instances": []}) == []
