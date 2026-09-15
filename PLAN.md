@@ -292,10 +292,72 @@ sahte çıktı yok.
   bulgusu olacak", her iki varyant BİLEREK tutuluyor, ikisi de C3'e
   girecek.
 
-- **C3** `circuits/calibrate.py` + `scripts/bench_circuit.py` — ızgara:
-  k ∈ {1,4,8} × bit ∈ {8,16}. Her kombinasyon için kısıt sayısı,
-  derleme/setup/ispat/doğrulama süresi, tepe RAM, ispat boyutu.
-  Patlayan kombinasyon "başarısız" işaretlenir, koşu düşmez.
+  **Colab sonucu (2. tur, doğrulandı):** iki varyant da başarıyla ihraç
+  edildi. `gather`: 35 düğüm, `{ArgMax:1, Gather:1, Cast:1, MatMul:3, ...}`.
+  `matmul`: 35 düğüm, `{MatMul:4, Cast:2, ...}` — `ArgMax`/`Gather`
+  GERÇEKTEN yok. İki mod arası çıktı farkı `0.0`, C0 referansına karşı
+  ~2e-6. Budanmış parametre sayısı: 350.848 (1. turdakiyle aynı).
+
+- **C3** `scripts/bench_circuit.py` — kod yazıldı, Colab'da HENÜZ
+  koşulmadı. Izgara: k ∈ {1,4,8} × embed_mode ∈ {matmul,gather} ×
+  `input_scale`/`param_scale` ∈ {8,11,13} (26. maddedeki "bit" fikri,
+  ezkl==23.0.5'in gerçek API'sindeki karşılığı olan `input_scale`/
+  `param_scale`'e göre güncellendi). Sıralama BİLEREK küçükten büyüğe:
+  ilk kombinasyon (k=1, matmul, scale=8) — `--only-first` bayrağıyla
+  tek başına denenebilir, büyük kombinasyonlara ancak bu geçerse geçilir.
+
+  Her kombinasyon KENDİ alt sürecinde çalışır (üç gerekçe: (1) tepe RAM
+  `resource.getrusage(RUSAGE_SELF).ru_maxrss` ile kombinasyon başına
+  temiz ölçülebiliyor — aynı süreçte ardışık koşulsa önceki
+  kombinasyonlardan ayrıştırılamazdı; (2) ezkl'nin Rust tarafının
+  bastığı loglar [decomposition uyarıları, `max_abs_error`] Python
+  `sys.stdout` yönlendirmesiyle değil, gerçek alt süreç stdout/stderr
+  fd'siyle güvenilir yakalanıyor; (3) bir kombinasyon çökerse/segfault
+  verirse sadece o alt süreç ölür, ebeveyn diğerlerine devam eder).
+  Kombinasyon başına varsayılan timeout 1800s (konfigüre edilebilir),
+  aşılırsa POSIX'te süreç GRUBU (`os.killpg`) öldürülüyor — anvil gibi
+  torun süreçler de öksüz kalmıyor. Her kombinasyondan hemen sonra
+  `bench_results.json` diske yazılıyor (atomic tmp+`os.replace`) —
+  Colab kopsa bile zaten sonuçlanmış kombinasyonlar `--force` verilmeden
+  tekrar koşulmuyor (resume).
+
+  Ölçülen alanlar: `gen_settings`+`calibrate_settings` süresi (ayrı ayrı
+  de saklanıyor), `compile_circuit` süresi + best-effort devre
+  istatistikleri (`settings.json`'dan `logrows`/`num_rows`/
+  `num_required_lookups` vb. — şema sürüme göre değişebileceğinden
+  hiçbiri zorunlu değil), `setup` süresi + pk/vk boyutu, `gen_witness`/
+  `prove`/`verify` (offchain) süreleri + ispat boyutu, decomposition
+  uyarı SAYISI + `max_abs_error` (alt sürecin TAM stdout'undan regex ile
+  ayrıştırılıyor), Solidity verifier üretimi+derlemesi (`chain.solc.compile_with_fallback_strategies`
+  yeniden kullanıldı, `viaIR=False/runs=200` ilk sırada) + deployed
+  bytecode boyutu + EIP-170 aşımı, `verify_gas` (anvil'de deploy+
+  `verifyProof`, `circuits.toy_pipeline`'ın Faz B'de kanıtlanmış
+  fonksiyonları — `generate_solidity_verifier`, `deploy_and_verify_onchain`,
+  `deploy_and_verify_via_ezkl_native` fallback'ı — DOĞRUDAN yeniden
+  kullanıldı, DRY).
+
+  **Bilinçli varsayım (Colab'da doğrulanacak):** `calibrate_settings`
+  scale'i otomatik seçtiğinden, ızgaranın `scale` ekseninin GERÇEKTEN
+  uygulandığından emin olmak için `calibrate_settings` sonrası
+  `settings.json` okunup `run_args.input_scale`/`param_scale` istenen
+  değere ZORLANIYOR (`force_settings_scale`) — `run_args` beklenen
+  şekilde değilse net UYARI basılıp calibrate'in seçimi kullanılıyor.
+  Çoklu-girdi (`z`,`c`) `input.json` şeması `{"input_data": [flat_z,
+  flat_c]}` olarak varsayıldı — ilk Colab koşumu bunu doğrulayacak.
+
+  Saf yardımcılar (`build_grid`, `combo_key`, `count_decomposition_warnings`,
+  `extract_max_abs_error`, `extract_circuit_stats`, `force_settings_scale`,
+  `build_multi_input_json`, `load_bench_results`/`save_bench_results`,
+  `render_markdown_table`) yerelde `tests/test_bench_circuit.py` ile
+  GERÇEKTEN test edildi (18 test) — modül kendi top-level'ında `import ezkl`
+  YAPMIYOR (sadece `run_ezkl_pipeline`/`run_prove_and_verify`/`run_worker`
+  içinde, çağrıldıklarında), bu yüzden `--help` de dahil yerelde hatasız
+  çalışıyor. `run_worker`/zincir adımları BİLİNÇLİ TEST SINIRI içinde
+  (ezkl+anvil+solc+web3 gerektirir, sadece Colab'da doğrulanabilir).
+
+  Çıktı: `{zk_root}/bench/bench_results.json` + konsol tablosu +
+  `docs/phase_c_bench.md` (markdown tablo, aynı `render_markdown_table`
+  fonksiyonuyla üretiliyor — DRY).
 - **C4** Kuantizasyon etkisi: w_q ve fp32 w arasında kosinüs benzerliği
   ve L2 farkı, DR sınıfı başına ayrı.
 
@@ -314,6 +376,9 @@ bir varyantı üretiliyor. **C3'ün ilk adımı artık ikisini de ayrı ayrı
 BİLEREK tutuluyor (kullanıcı: "makalede somut bir devre optimizasyonu
 bulgusu olacak") — C3'ün (k, bit) benchmark ızgarasına `embed_mode`
 (gather/matmul) da bir boyut olarak eklenmeli, sadece k×bit değil.
+**(KOD YAZILDI:** `scripts/bench_circuit.py`'nin ızgarası
+k×embed_mode×scale — `embed_mode` sıralamada `matmul` önce geliyor,
+"en küçükten başla" ilkesiyle tutarlı.**)**
 
 **Faz B'den not (C3/C4 için girdi):** Oyuncak MLP'nin (32→32→8, ezkl
 varsayılan `calibrate_settings(..., "resources")` ile otomatik
@@ -333,6 +398,11 @@ C3'ün (k, bit) taramasında bu uyarıların sıklığı/varlığı ve
 yanında AYRI bir sütun olarak kaydedilmeli — düşük `bit_width` (8)
 gerçek ağda bu uyarıları fatal hataya (ya da sessiz hassasiyet kaybına)
 çevirebilir, `bit_width=16` daha güvenli başlangıç noktası olabilir.
+**(KOD YAZILDI:** `scripts/bench_circuit.py: count_decomposition_warnings`/
+`extract_max_abs_error` alt sürecin TAM stdout'unu regex ile ayrıştırıp
+her kombinasyon için ayrı sütun olarak `bench_results.json`'a yazıyor;
+"bit_width" yerine ezkl==23.0.5'in gerçek API'si `input_scale`/`param_scale`
+kullanılıyor, ızgara {8,11,13}.**)**
 
 **Faz B'den ikinci not (C3 için ek sütun — bytecode boyutu):** Oyuncak
 MLP'nin verifier kontratı 13.426 byte (EIP-170'in 24.576 byte sınırının
@@ -346,6 +416,13 @@ eklenmeli** (`chain.solc.compile_with_fallback_strategies`'in zaten
 döndürdüğü alanlar) — ispat/doğrulama başarılı olsa bile verifier
 deploy edilemiyorsa (EIP-170 aşılıyorsa) o (k, bit) kombinasyonu da
 "başarısız" sayılmalı.
+**(KOD YAZILDI:** `scripts/bench_circuit.py` her kombinasyonda
+`compile_verifier_solidity` sonucunu `deployed_bytecode_size`/
+`exceeds_eip170` olarak kaydediyor; ayrıca EIP-170'i aşan bytecode'un
+gerçek deploy denemesi zaten EVM tarafından reddedilip (`receipt.status==0`)
+`Web3Client.deploy_bytecode`'un fırlattığı hata üzerinden kombinasyon
+doğal olarak "failed" işaretleniyor — özel bir erken-çıkış eklenmedi,
+gerçek zincir davranışı gözlemleniyor.**)**
 
 ## Faz D (yerel) — Kontratlar ve orkestratör
 
