@@ -571,25 +571,134 @@ gerçek zincir davranışı gözlemleniyor.**)**
 
 ## Faz D (yerel) — Kontratlar ve orkestratör
 
-**durum: yapılmadı**
+**durum: kod yazıldı (tüm parçalar), Colab'da HENÜZ koşulmadı/doğrulanmadı.**
+Protokol k=1 ile çalışır (Faz C3'ün EIP-170 bulgusu — bkz. `docs/phase_c_report.md`).
 
-`contracts/RoundManager.sol`: `registerSite`, `startRound(roundId,
-globalCID, globalHash, challengeSeed)`, `submitUpdate(roundId,
-updateCID, commitment)`, `submitProof -> Verifier.verifyProof`,
-`finalizeRound(includedSites[])`, itibar mapping'i + eşik altında
-dışlama, her adımda event. `Verifier.sol`'u ezkl üretir, elle yazma.
+**ÖNEMLİ TASARIM SAPMASI (kullanıcının orijinal spesifikasyonundan,
+gerekçeli):** `RoundManager.sol` TEK bir sabit `verifier` adresi
+TUTMUYOR — `submitProof(roundId, verifierAddress, proof, publicInputs)`
+verifier adresini PARAMETRE olarak alıyor. Sebep: Faz B/C boyunca ezkl
+`param_visibility="fixed"` kullanıldı — ağırlıklar devrenin SABİT
+sütunlarına (vk/verifier bytecode'unun İÇİNE) gömülü. Federe öğrenmede
+her round/site'ın ağırlıkları FARKLI olduğundan HER (round,site)
+ispatının KENDİ verifier'ı olması GEREKİYOR — tek bir sabit adres round
+2'den itibaren YANLIŞ olurdu. `orchestrator/round_runner.py` bu yüzden
+her gerekli ispat için TAZE bir Verifier deploy edip adresini
+`submitProof`'a veriyor (`Submission.verifierUsed`'da denetlenebilir
+tutuluyor). Bunun somut bir maliyet sonucu var: HER gerekli ispat artık
+ezkl setup+prove (~75s, Faz C3) + solc derleme (~20s, Faz B) + verifier
+deploy gas'ı (~2,96M, Faz B) + submitProof gas'ı (~1,17M, Faz C3)
+gerektiriyor — `orchestrator/schedule.py`'nin `random_ratio=0.3`
+örneklemesinin (her round her site yerine) neden ekonomik olarak
+GEREKLİ olduğunu somutlaştırıyor.
 
-`chain/client.py`: web3.py sarmalayıcı, her çağrıda gas ölç.
+- **`contracts/RoundManager.sol`**: `registerSite` (onlyOwner),
+  `startRound` (challengeSeed = `keccak256(blockhash(block.number-1), roundId)`),
+  `submitUpdate` (kayıtlı site + açık round + tekil gönderim kontrolü),
+  `submitProof` (yukarıdaki tasarım notuyla; `IHalo2Verifier.verifyProof`'u
+  `try/catch` ile çağırıyor — ezkl'nin ürettiği GERÇEK Verifier'ın imzası
+  kesin bilinmediğinden, `try/catch` HER İKİ olası davranışa (revert EDER
+  ya da `false` DÖNER) karşı güvenli: en kötü ihtimalle ispat "geçersiz"
+  sayılır, asla yanlış pozitif üretmez — imza gerçekten uyuşmuyorsa
+  Colab'daki `tests/test_contracts.py` bunu AÇIKÇA ortaya çıkaracak),
+  `finalizeRound` (sadece `proofVerified=true` VEYA ispat hiç
+  istenmemiş site'lar dahil edilebilir), itibar +bonus/-penalty +
+  eşik-altı `SiteExcluded` event'i, `getChallengeSeed`/`isSiteEligible`/
+  `getRoundInfo` + ek `getSubmission` (spesifikasyonda yoktu ama
+  `proofVerified`'ı zincirden geri okumak için gerekli). Her durum
+  değişikliğinde event. Derleme: `chain.solc.compile_with_fallback_strategies`
+  (Faz B'nin viaIR=False/runs=200/solc=0.8.20 ilk sırada).
 
-`orchestrator/`: round_runner (challenge üretimi seed'den
-deterministik), schedule (kademeli vs tam mod), aggregate (norm
-kontrolü, NaN/Inf kontrolü, fp32 FedAvg, sadece zincirde onaylananlar).
+- **`chain/client.py`**: `RoundManagerClient` (yeni, `Web3Client`'tan
+  türer) — `RoundManager.sol`'un her fonksiyonu için bir metod, her
+  state-değiştiren çağrı `(sonuç, gasUsed)` döner. Private key'ler
+  `normalize_private_key_hex` ile normalize edilip geri `0x` eklenerek
+  veriliyor (Faz C3'ün private-key tuzağına burada da düşmemek için —
+  web3.py aslında ikisini de kabul ediyor, ama erken doğrulama için
+  bilerek kullanıldı). `Web3Client.deploy_contract` (yeni) constructor
+  argümanlarını web3.py'nin KENDİ ABI kodlamasıyla (elle DEĞİL) ekliyor.
 
-`tests/test_contracts.py`: mutlu yol, geçersiz ispat reddi, itibar
-düşüşü, çift submit. GERÇEK ezkl ispatlarıyla test et, sahte bytes ile
-değil.
+- **`orchestrator/challenge.py`**: `build_challenge_z_c` —
+  `fl.reference_utils.build_z_c`'yi (Faz C0) DOĞRUDAN yeniden kullanır,
+  tohum artık zincirden gelen `bytes32`'nin türevi. k=1 varsayılan
+  (Faz C3). 8 test, saf, yerelde gerçekten koşuyor.
 
-**Kabul:** testler yeşil, gas rakamları raporlandı.
+- **`orchestrator/schedule.py`**: `must_prove` üç kuralı OR'lar (sabit
+  round → zorunlu, itibar eşik-altı → zorunlu, aksi halde
+  `challengeSeed`+round+site'den deterministik-sha256 ile `[0,1)` bir
+  değer ürettirip `random_ratio` ile karşılaştırır). `mode="full"`
+  (her round her site — makalenin karşılaştırma tabanı) vs
+  `mode="sampled"` (üretim modu). `configs/schedule.yaml` gerçek
+  operasyonel değerlerle dolduruldu: `fixed_rounds=[0,7,14]`,
+  `random_ratio=0.3`, `reputation_threshold=50`, `reputation_initial=100`,
+  `reputation_penalty=20`, `reputation_bonus=1` — her biri dosyanın
+  içinde gerekçeli. 13 test, saf, yerelde gerçekten koşuyor.
+
+- **`orchestrator/aggregate.py`**: `fl.fedavg_utils.RunningAverage`'i
+  DOĞRUDAN kullanır (yeniden YAZMAZ) — bu, Faz A'nın `audit_fedavg.py`'sinin
+  doğruladığı fp32 aritmetikle BİREBİR aynı sonucu TANIM GEREĞİ garanti
+  eder. `gate_site_update`: norm (`tau_norm_threshold=3000.0`, Faz A'nın
+  p99 ölçümü), NaN/Inf, zincir-onayı kontrolleri — KUANTİZASYON YAPMAZ
+  (CLAUDE.md madde 5). `test_aggregate_round_matches_running_average_when_nothing_excluded`
+  bu garantiyi doğrudan `RunningAverage`'e karşı kanıtlıyor. 13 test,
+  saf, yerelde gerçekten koşuyor.
+
+- **`storage/ipfs.py`**: yerel kubo node'u için ince `add`/`get`
+  sarmalayıcısı, node yoksa net hata (uydurma CID YOK). `scripts/setup_colab.sh`'a
+  kubo (v0.29.0) kurulumu eklendi. Saf `is_valid_cid` yerelde test
+  edildi.
+
+- **`fl/round_replay.py`**: `round_runner.py`'nin "yerel eğitim" adımının
+  ince sarmalayıcısı — **GERÇEK EĞİTİM YAPMAZ** (CLAUDE.md madde 2/3:
+  base model/15 round yeniden eğitilmez, eğitim döngüsüne dokunulmaz).
+  Faz A'da ZATEN üretilmiş site snapshot'ını `raw_root`'tan (salt okunur)
+  yükler — `round_runner.py` canlı bir eğitim turu BAŞLATMIYOR, mevcut
+  bir round'u protokol açısından REPLAY ediyor (canlı entegre koşu ayrı,
+  Faz F'in kapsamı).
+
+- **`scripts/deploy_contracts.py`**: SADECE `RoundManager`'ı deploy eder
+  (yukarıdaki tasarım sapması gereği genesis'te bir Verifier YOK — her
+  gerekli ispat kendi Verifier'ını `round_runner.py` üzerinden alır).
+  anvil bu script tarafından yönetilmiyor (bilerek — deploy edilen
+  kontrat script bittikten SONRA da durmalı), `--rpc-url`/`--private-key`
+  ZORUNLU.
+
+- **`orchestrator/round_runner.py`**: 9 adımlık akış (bkz. modül
+  docstring'i) — `progress.json` ile devam edilebilir (atomic
+  tmp+`os.replace`, `extract_shards.py`'nin deseniyle tutarlı). Her
+  gerekli ispat için `scripts.bench_circuit.run_ezkl_pipeline`/
+  `run_prove_and_verify` + `circuits.toy_pipeline.generate_solidity_verifier`/
+  `compile_verifier_solidity` DOĞRUDAN yeniden kullanılıyor (DRY, hiçbir
+  ezkl/solc çağrısı yeniden yazılmadı). `proof.json`'un İÇERİĞİ
+  (`{"proof": "0x...", "instances"/"public_inputs": [...]}` varsayıldı)
+  Faz D'de İLK KEZ ayrıştırılıyor — Faz B/C boyunca sadece dosya varlığı
+  kontrol ediliyordu, içeriği hiç okunmamıştı; bu VARSAYIM Colab'da
+  doğrulanacak.
+
+- **`tests/test_contracts.py`**: mutlu yol, geçersiz ispat reddi +
+  itibar düşüşü, eşik-altı dışlama, çift submit reddi, kayıtsız site
+  reddi, doğrulanmamış site'nin finalizeRound'a alınamaması. GERÇEK
+  ezkl ispatlarıyla (Drive/pkl GEREKMEYEN küçük sentetik bir devreyle —
+  testi Colab'a özgü olmaktan çıkarıyor, ama yine de ezkl'nin GERÇEK
+  setup/prove/verify zincirinden geçiyor — "geçersiz ispat" testi
+  GERÇEK bir proof'u bilerek bozuyor, sıfırdan uydurma bytes DEĞİL).
+  Pahalı ezkl+solc kurulumu modül başına BİR KEZ (`scope="module"`
+  fixture), testler arasında paylaşılıyor.
+
+**BİLİNÇLİ TEST SINIRI:** `contracts/RoundManager.sol`, `chain/client.py:
+RoundManagerClient`, `orchestrator/round_runner.py`, `scripts/deploy_contracts.py`,
+`storage/ipfs.py`'nin gerçek IPFS/ezkl/anvil/solc/web3 kısımları hiçbiri
+yerelde çalıştırılamaz/test edilemez — SADECE Colab'da
+(`tests/test_contracts.py` + gerçek bir `round_runner.py` koşumu)
+doğrulanabilir. Saf/dosya-tabanlı yardımcılar (`challenge.py`,
+`schedule.py`, `aggregate.py`, `round_runner.py`'nin `load_progress`/
+`save_progress`/`compute_weight_commitment`/`load_circuit_config`'i,
+`storage/ipfs.py: is_valid_cid`) 40+ testle yerelde GERÇEKTEN doğrulandı
+(216 passed, 2 skipped toplam).
+
+**Kabul:** testler yeşil, gas rakamları raporlandı. **HENÜZ KARŞILANMADI**
+— Colab'da `tests/test_contracts.py` koşulup gerçek gas/zaman rakamları
+raporlanana kadar bu faz "tamamlandı" sayılmayacak.
 
 ## Faz E (yerel + Colab) — Replay
 

@@ -1,13 +1,51 @@
-# İspat takvimi ve kabul eşikleri.
+# İspat takvimi ve kabul eşikleri. Faz D (orchestrator/schedule.py,
+# orchestrator/aggregate.py, contracts/RoundManager.sol) bu dosyayı okur.
 
 proof_schedule:
-  # fixed_rounds: her zaman tam ispat istenecek round numaraları (ör. [0, 7, 14]).
-  fixed_rounds: []
-  # random_ratio: sabit turlar dışında, rastgele seçilecek site/round
-  # oranı (0.0-1.0). Kademeli modda kullanılır.
-  random_ratio: null
-  # reputation_threshold: bu eşiğin altına düşen site sonraki turlarda dışlanır.
-  reputation_threshold: null
+  # fixed_rounds: her zaman TAM ispat istenecek round numaraları (o
+  # round'da random_ratio/itibar durumundan BAĞIMSIZ, HER site ispat
+  # üretir). 0 (baz model sonrası ilk round), 7 (orta nokta) ve 14
+  # (son round, Faz A'nın tamamlandığı deney bu kadar sürdü) seçildi —
+  # deneyin başı/ortası/sonu her zaman tam denetimli.
+  fixed_rounds: [0, 7, 14]
+  # random_ratio: sabit turlar DIŞINDA, her (round,site) çiftinin ispat
+  # üretmesi için deterministik-rastgele seçilme olasılığı. 0.3 seçildi:
+  # her site'ı her round'da ispatlamak (Faz C3 ölçümüyle ~37s prove +
+  # ~37s setup + gerçek zincir gas'ı) 15 round × birden fazla site için
+  # ciddi bir toplam maliyet biriktirir; %30 örnekleme, sabotajı
+  # (itibar mekanizmasıyla birlikte) caydırmaya yetecek kadar sık
+  # denetim + kabul edilebilir toplam ispat sayısı arasında bir denge.
+  # "full" modu (mode="full", orchestrator/schedule.py:must_prove) bu
+  # oranı YOKSAYIP HER round HER site'ı ispatlar — makalenin karşılaştırma
+  # tabanı (örnekleme YOKKEN maliyet ne olurdu).
+  random_ratio: 0.3
+  # reputation_threshold: bu eşiğin ALTINA düşen site (a) sonraki
+  # turlarda ZORUNLU ispat üretir (random_ratio'dan bağımsız) VE (b)
+  # RoundManager.sol: isSiteEligible false döner (finalizeRound'a dahil
+  # edilemez). reputation_initial'ın (100) yarısı seçildi: iki başarısız
+  # ispat (penalty=20 her biri) siteyi bu eşiğin altına düşürür.
+  reputation_threshold: 50
+
+# reputation_initial: her yeni registerSite çağrısında sitenin başlangıç
+# itibarı. round_id/site sayısından bağımsız sabit bir protokol
+# parametresi — 0-100 ölçeğinde "tam güven" ile başlanıyor.
+reputation_initial: 100
+
+# reputation_penalty: geçersiz bir ispat (submitProof False) sonrası
+# itibardan düşülecek miktar. 20 seçildi: reputation_threshold (50) ile
+# birlikte İKİ ardışık başarısız ispat siteyi eşiğin altına düşürür
+# (100 -> 80 -> 60 -> 40), üçüncüsünden SONRA değil ikincisinden SONRA
+# zorunlu-denetim moduna girer — tek seferlik bir hata (ağ sorunu,
+# geçici bozuk snapshot) hemen dışlamaya yol açmasın ama tekrarlayan
+# başarısızlık hızlı yakalansın.
+reputation_penalty: 20
+
+# reputation_bonus: geçerli bir ispat (submitProof True) sonrası
+# itibara eklenecek miktar. 1 seçildi (ceza 20'nin çok altında) —
+# itibarın hızlı DÜŞMESİ ama yavaş TOPLANMASI isteniyor: bir kez
+# şüpheli davranan site kolayca "temize çıkmamalı", uzun süreli
+# tutarlı doğru davranışla kademeli güven kazanmalı.
+reputation_bonus: 1
 
 # tau_norm_threshold: ΔG normunun bu değeri aşması sabotaj şüphesi
 # sayılır. delta-G p99=2518 (n=56, Faz A ölçümü); tau bunun ~1.2 katı

@@ -65,5 +65,28 @@ anvil --version || fail "anvil kuruldu ama --version çalışmadı."
 cast --version || fail "cast kuruldu ama --version çalışmadı."
 echo "Foundry OK"
 
+echo "== kubo (IPFS) =="
+# Faz D: site güncellemeleri/agregasyon çıktıları IPFS'e yükleniyor,
+# zincire sadece CID yazılıyor (bkz. storage/ipfs.py, CLAUDE.md).
+# Colab her zaman linux-amd64 olduğundan mimari sabit.
+KUBO_VERSION="v0.29.0"
+if ! command -v ipfs >/dev/null 2>&1; then
+    echo "kubo bulunamadı, kuruluyor ($KUBO_VERSION)..."
+    KUBO_TARBALL="kubo_${KUBO_VERSION}_linux-amd64.tar.gz"
+    curl -fsSL -o "/tmp/${KUBO_TARBALL}" \
+        "https://dist.ipfs.tech/kubo/${KUBO_VERSION}/${KUBO_TARBALL}" \
+        || fail "kubo indirilemedi."
+    tar -xzf "/tmp/${KUBO_TARBALL}" -C /tmp || fail "kubo arşivi açılamadı."
+    bash /tmp/kubo/install.sh || fail "kubo install.sh başarısız."
+fi
+check_cmd ipfs
+ipfs --version || fail "ipfs kuruldu ama --version çalışmadı."
+if [ ! -d "$HOME/.ipfs" ]; then
+    ipfs init || fail "'ipfs init' başarısız (node ilk kez kuruluyor)."
+fi
+echo "kubo OK: $(ipfs --version)"
+echo "NOT: kubo kurulu/init edilmiş olması node'un ÇALIŞTIĞI anlamına gelmez — "
+echo "     storage/ipfs.py'yi kullanmadan önce ARKA PLANDA 'ipfs daemon &' başlatılmalı."
+
 echo "== Kurulum tamamlandı, tüm araçlar doğrulandı =="
 echo "NOT: Colab oturumu koparsa bu script'i yeniden çalıştırman gerekir (Colab kalıcı disk değil)."
