@@ -605,6 +605,7 @@ def run_worker(args: argparse.Namespace) -> int:
     bloğunda) — ebeveyn bu dosyayı okuyarak neyin nereye kadar gittiğini
     öğrenir."""
     from chain.anvil import AnvilProcess
+    from chain.solc import EIP170_MAX_DEPLOYED_BYTECODE_SIZE
     from circuits.toy_pipeline import (
         compile_verifier_solidity,
         deploy_and_verify_onchain,
@@ -656,28 +657,45 @@ def run_worker(args: argparse.Namespace) -> int:
 
         sol_path, _abi_path = generate_solidity_verifier(ezkl_paths, work_dir)
 
+        # compile_verifier_solidity'nin BAŞARISIZLIĞI (solc'un TÜM stratejileri
+        # düşer - boyuttan BAĞIMSIZ bir sebep, ör. beklenmedik bir sözdizimi
+        # hatası) İLE deployed_bytecode'un EIP-170'i AŞMASI (solc BAŞARIYLA
+        # derledi, sadece sonuç çok büyük) İKİ AYRI durumdur. Eskiden ikisi de
+        # aynı `except RuntimeError` bloğuna düşüyordu (deploy_and_verify_onchain
+        # da o try içindeydi) — bu da EIP-170 aşımı yüzünden BEKLENEN bir deploy
+        # reddini "solc başarısız" sanıp gereksiz yere ezkl'nin native
+        # deploy_evm fallback'ine düşürüyordu. Artık ayrı ele alınıyor.
         t0 = time.perf_counter()
+        compiled = None
         try:
             compiled = compile_verifier_solidity(sol_path)
             result["timings"]["solc_compile"] = time.perf_counter() - t0
             result["deployed_bytecode_size"] = compiled["deployed_bytecode_size"]
             result["exceeds_eip170"] = compiled["exceeds_eip170"]
             result["used_solc_strategy"] = compiled.get("used_strategy")
-
-            with AnvilProcess() as anvil:
-                onchain = deploy_and_verify_onchain(compiled["bytecode"], prove_result["proof_path"], work_dir, anvil)
         except RuntimeError as e:
-            print(f"[bench_circuit] Tüm solc stratejileri başarısız, ezkl native deploy'a düşülüyor: {e}")
+            print(f"[bench_circuit] Tüm solc stratejileri başarısız: {e}")
             result["solc_fallback_reason"] = str(e)
+
+        if compiled is not None and compiled["exceeds_eip170"]:
+            print(
+                f"[bench_circuit] EIP-170 AŞIMI: deployed_bytecode_size={compiled['deployed_bytecode_size']} "
+                f"> {EIP170_MAX_DEPLOYED_BYTECODE_SIZE} — deploy HİÇ DENENMİYOR, adım atlanıyor."
+            )
+            result["status"] = "eip170_exceeded"
+        else:
             with AnvilProcess() as anvil:
-                onchain = deploy_and_verify_via_ezkl_native(sol_path, prove_result["proof_path"], work_dir, anvil)
+                if compiled is not None:
+                    onchain = deploy_and_verify_onchain(compiled["bytecode"], prove_result["proof_path"], work_dir, anvil)
+                else:
+                    # solc TAMAMEN başarısız oldu (boyuttan bağımsız) - son çare ezkl'nin kendi deploy_evm'i.
+                    onchain = deploy_and_verify_via_ezkl_native(sol_path, prove_result["proof_path"], work_dir, anvil)
 
-        result["contract_address"] = onchain["contract_address"]
-        result["deploy_gas"] = onchain["deploy_gas"]
-        result["verify_gas"] = onchain["verify_gas"]
-        result["verified_onchain"] = onchain["verified"]
-
-        result["status"] = "success"
+            result["contract_address"] = onchain["contract_address"]
+            result["deploy_gas"] = onchain["deploy_gas"]
+            result["verify_gas"] = onchain["verify_gas"]
+            result["verified_onchain"] = onchain["verified"]
+            result["status"] = "success"
 
     except (KeyboardInterrupt, SystemExit):
         raise

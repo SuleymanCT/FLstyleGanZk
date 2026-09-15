@@ -454,18 +454,35 @@ notunda ve dosyanın kendi yorumlarında.
     AŞIYOR (26.757/26.758, 32.144/32.142 byte) — zincir üstü doğrulama
     sadece k=1 ile mümkün. **Protokol sonucu: Faz D her challenge'da TEK
     örnek ispatlamalı** (`configs/circuit.yaml: challenge_size_k=1`).
-  - **3 hata düzeltildi:** (1) `ezkl.deploy_evm` private key `0x` önekiyle
-    çağrılıyordu, `deploy_evm` önekSİZ 64-hex bekliyor —
-    `chain/anvil.py: normalize_private_key_hex` eklendi, k=4/k=8 artık
-    private-key hatası yerine gerçek EIP-170 deploy hatasıyla düşecek.
-    (2) `max_abs_error`/`max_abs_error_%` boştu — ezkl'nin GERÇEK
-    raporu basit `k=v` değil çok sütunlu pipe'lı markdown tablo;
+  - **3 hata düzeltildi (1. tur):** (1) `ezkl.deploy_evm` private key
+    `0x` önekiyle çağrılıyordu, `deploy_evm` önekSİZ 64-hex bekliyor —
+    `chain/anvil.py: normalize_private_key_hex` eklendi. (2)
+    `max_abs_error`/`max_abs_error_%` boştu — ezkl'nin GERÇEK raporu
+    basit `k=v` değil çok sütunlu pipe'lı markdown tablo;
     `parse_markdown_table_column` (yeni) sütun-bazlı okuyor, hâlâ
     ayrıştırılamazsa `"yakalanamadi"` yazıyor (boş bırakmıyor). (3)
     `gerceklesen_scale` boştu — basit bir kopyalama hatası
     (`run_worker`, `setup_result["realized_scale"]`'i `result`'a hiç
     kopyalamıyordu), düzeltildi. `--only` bayrağı eklendi (belirli
     kombinasyonları yeniden koşmak için, 30'unu baştan koşmadan).
+
+  **Hedefli yeniden koşum (2. tur) — gerceklesen_scale/max_abs_error
+  DOĞRULANDI, YENİ bir deploy hatası çıktı:** `max_abs_error` (matmul,
+  scale=8): k=1→0.1331 (%3,21), k=4→0.137 (%3,205), k=8→0.1658
+  (%3,879) — bkz. `configs/circuit.yaml` ve `docs/phase_c_report.md`
+  "Fidelity" bölümü (ispatın geçerliliğini ETKİLEMİYOR, kuantize
+  hesabın kendisi doğrulanıyor). private-key düzeltmesi işe yaradı ama
+  k=4/k=8'de YENİ hata çıktı: `[eth] failed to parse url .../Verifier.sol`
+  — `ezkl.deploy_evm`'in GERÇEK pozisyonel argüman sırası `ezkl.pyi`'nin
+  belgelediğinden FARKLIYMIŞ (`sol_code_path` `rpc_url` slotuna
+  düşüyordu). **Düzeltme:** çağrı artık pozisyonel değil, `ezkl.pyi`'den
+  alınan parametre ADLARIYLA (kwarg). Ayrıca MİMARİ düzeltme: EIP-170
+  aşımı artık solc "tamamen başarısız"dan AYRI ele alınıyor — bytecode
+  sınırı aşıyorsa deploy HİÇ DENENMİYOR, `status="eip170_exceeded"`
+  (`"failed"`den ayrı) işaretleniyor (eskiden EIP-170'in DOĞAL deploy
+  reddi yanlışlıkla "solc başarısız" sanılıp ezkl'nin native
+  `deploy_evm`'ine düşürülüyordu — asıl kök sebep buydu). Bu iki
+  düzeltme Colab'da HENÜZ yeniden doğrulanmadı.
 
 - **C4** Kuantizasyon etkisi: w_q ve fp32 w arasında kosinüs benzerliği
   ve L2 farkı, DR sınıfı başına ayrı.

@@ -25,6 +25,8 @@ teşhisin ÜZERİNE, tam ızgara sonucudur.
 4. **EIP-170: sadece k=1 geçiyor.** k=4/k=8 verifier'ları deploy
    edilemeyecek kadar büyük — protokol tasarımı buna göre şekillendi
    (aşağıda "Protokol tasarımına etki" bölümü).
+5. **scale=8'de bağıl hata ~%3.2-3.9** (k'ye göre değişiyor) — aşağıdaki
+   "Fidelity: max_abs_error" bölümü.
 
 ## matmul vs gather (k=1, scale=8) — ikisi de zincir üstünde doğrulandı
 
@@ -71,6 +73,34 @@ sayısıyla kabaca doğrusal büyür" öngörüsü ve `PLAN.md`'nin Faz B'den
 gelen notu ("EIP-170 aşma ihtimali gerçek") burada TAM olarak
 doğrulandı — sadece k=1 sınırın altında kalıyor.
 
+## Fidelity: `max_abs_error` (scale=8)
+
+| k | embed_mode | max_abs_error | max_abs_error_% (referans `w`'ye oranla) |
+|---|---|---:|---:|
+| 1 | matmul | 0.1331 | %3,21 |
+| 4 | matmul | 0.137 | %3,205 |
+| 8 | matmul | 0.1658 | %3,879 |
+
+(`docs/phase_c_calibration.md`'nin ilk teşhis koşumunda k=1 için
+gözlenen `0.133` ile aynı büyüklük mertebesinde — sağlıklı, çünkü
+kalibrasyon tarafı k'den etkilenmiyor, farklar sadece hangi örneklerin
+w çıktısına düştüğünden kaynaklanıyor.)
+
+**Bu ispatın GEÇERLİLİĞİNİ etkilemiyor.** ezkl'nin ürettiği ispat,
+"belirli bir SABİT NOKTALI (fixed-point, scale=8) kuantize devrenin
+belirli bir tanık için doğru şekilde hesaplandığı"nı kanıtlıyor — kanıt
+sistemi kuantize aritmetiğin KENDİSİNİ doğruluyor, orijinal fp32 mapping
+ağının çıktısını DEĞİL. Ağırlıkların gerçek (fp32) StyleGAN-XL
+checkpoint'inden geldiği iddiası ayrı bir mekanizmayla (shard'ın
+`canonical_hash`'i / taahhüt) bağlanıyor, ispatın kendisi bu bağlamayı
+kanıtlamıyor. Dolayısıyla `max_abs_error≈%3,2-3,9`, kuantizasyonun
+FARKLILAŞTIRABİLİR görüntü çıktısı üzerindeki etkisini gösteren, C4'te
+(kuantizasyon etkisi — kosinüs benzerliği/L2 farkı, DR sınıfı başına)
+daha ayrıntılı ele alınacak AYRI bir soru; ama makalede scale seçiminin
+maliyetini (daha yüksek fidelity istenirse scale artırılabilir, ama bu
+raporun gösterdiği gibi mevcut devre boyutunda scale=8 ÜST SINIR)
+göstermek için raporlanması gereken somut bir sayı.
+
 ## Protokol tasarımına etki: challenge başına k=1
 
 Bu bulgunun doğrudan sonucu: **on-chain ispat protokolü (Faz D) HER
@@ -86,29 +116,60 @@ kurulamaz.
 
 ## Üç hata ve düzeltmeleri
 
-### 1. `ezkl.deploy_evm` private key format hatası
+### 1. `ezkl.deploy_evm` — iki aşamalı hata (private key formatı, sonra argüman sırası)
 
-k=4/k=8 kombinasyonlarında solc'un TÜM stratejileri başarısız olup
-(büyük verifier kontratının derleme zorluğu — beklenen, k arttıkça
-"Stack too deep" riski artıyor) `deploy_and_verify_via_ezkl_native`
-fallback'ine düşüldüğünde şu hata çıktı:
+k=4/k=8 kombinasyonlarında **eskiden** `compile_verifier_solidity`
+BAŞARILI oluyordu (bytecode boyutunu zaten biliyoruz: 26.757/26.758,
+32.144/32.142) ama hemen ardından `deploy_and_verify_onchain`
+(`Web3Client.deploy_bytecode`) EIP-170 yüzünden DOĞAL OLARAK
+başarısız oluyordu (`receipt.status != 1`) — bu `RuntimeError`, solc
+derlemesiyle AYNI `except RuntimeError` bloğuna düştüğü için (mimari
+hata: ikisi aynı `try` içindeydi) "solc tamamen başarısız" sanılıp
+gereksiz yere `deploy_and_verify_via_ezkl_native` (ezkl'nin kendi
+`deploy_evm`'i) fallback'ine düşülüyordu. Orada 1. tur şu hatayı
+verdi:
 
 ```
 RuntimeError: Failed to run deploy_evm: [eth] Private key must be in
 hex format, 64 chars, without 0x prefix
 ```
 
-`chain.anvil.AnvilProcess`'in verdiği private key `0x` ÖNEKLİ (anvil
-bannerının ve `Web3Client`/web3.py'nin beklediği format) ama
-`ezkl.deploy_evm` önekSİZ, tam 64 hex karakter bekliyor. **Düzeltme:**
-`chain/anvil.py: normalize_private_key_hex` (yeni, saf/testable
-fonksiyon) öneki soyup uzunluk/hex-karakter doğrulaması yapıyor;
-`circuits/toy_pipeline.py: deploy_and_verify_via_ezkl_native` artık
-`ezkl.deploy_evm`'e bu normalize edilmiş değeri veriyor. Bu düzeltmeyle
-k=4/k=8 artık private-key hatası yerine GERÇEK EIP-170 deploy
-başarısızlığıyla düşecek (anvil/EVM oversized bytecode'u reddedecek) —
-teşhis daha net olacak. `Web3Client`/anvil tarafında (k=1'in kullandığı
-yol) hiçbir şey değişmedi, zaten doğru çalışıyordu.
+(`chain.anvil.AnvilProcess`'in verdiği private key `0x` ÖNEKLİ —
+`Web3Client`/web3.py'nin beklediği format — ama `ezkl.deploy_evm`
+önekSİZ, tam 64 hex karakter bekliyor.) Bu `chain/anvil.py:
+normalize_private_key_hex` ile düzeltildi. Hedefli yeniden koşumda
+(`--only k4_matmul_scale8,k8_matmul_scale8 --force`) bu kez **2. bir
+hata** çıktı:
+
+```
+RuntimeError: Failed to run deploy_evm: [eth] failed to parse url
+/content/zk_bench_work/k4_matmul_scale8/Verifier.sol
+```
+
+`sol_code_path`'in DEĞERİ `rpc_url` parametresi olarak yorumlanmış.
+`ezkl.pyi`'nin (v23.0.5 etiketi) belgelediği pozisyonel sıra
+(`addr_path, sol_code_path, rpc_url, contract_type, optimizer_runs,
+private_key`) ile GERÇEK pyo3 bağlamasının kabul ettiği sıra FARKLIYMIŞ
+— yani dokümantasyon (bu noktada) güvenilir bir referans değilmiş.
+**Kalıcı düzeltme:** `deploy_and_verify_via_ezkl_native` artık
+`ezkl.deploy_evm`'i POZİSYONEL DEĞİL, `ezkl.pyi`'den alınan parametre
+ADLARIYLA (kwarg) çağırıyor — hangi pozisyonel sırayı kabul ettiği
+artık önemsiz.
+
+**Asıl mimari düzeltme:** EIP-170 aşımı artık AYRI ele alınıyor. `solc`
+derlemesi BAŞARILI olup `exceeds_eip170=True` çıkarsa, deploy HİÇ
+DENENMİYOR — ne `Web3Client` ne `ezkl.deploy_evm` çağrılıyor — sonuç
+doğrudan `status="eip170_exceeded"` (`"failed"`den AYRI bir durum)
+olarak işaretleniyor, log'a net bir "EIP-170 AŞIMI: ... deploy HİÇ
+DENENMİYOR" satırı yazılıyor. `deploy_and_verify_via_ezkl_native`
+fallback'i artık SADECE solc'un GERÇEKTEN (boyuttan bağımsız bir
+sebeple) tamamen başarısız olduğu durumda tetikleniyor.
+
+**Not — bu iki değişiklik (kwarg çağrısı + EIP-170 ön-kontrolü) kod
+seviyesinde yapıldı, Colab'da HENÜZ yeniden koşulup doğrulanmadı**
+(bir sonraki `--only k4_matmul_scale8,k8_matmul_scale8 --force` koşumu
+bunu netleştirecek — beklenen: `status="eip170_exceeded"`, hiçbir
+deploy denemesi/hatası olmadan).
 
 ### 2. `max_abs_error`/`max_abs_error_%` tabloda boştu
 

@@ -199,6 +199,17 @@ def deploy_and_verify_via_ezkl_native(sol_path: Path, proof_path: Path, work_dir
     `0x` ÖNEKİ OLMADAN bekliyor (Faz C3'ün gerçek Colab koşumunda
     gözlenen hata: `[eth] Private key must be in hex format, 64 chars,
     without 0x prefix`) — `normalize_private_key_hex` ile düzeltiliyor.
+
+    Argümanlar POZİSYONEL DEĞİL, KWARG olarak veriliyor: pozisyonel
+    çağrıda (`ezkl.pyi`'de belgelenen sıra: `addr_path, sol_code_path,
+    rpc_url, contract_type, optimizer_runs, private_key`) Faz C3'ün
+    gerçek Colab koşumunda `sol_code_path`'in DEĞERİ `rpc_url` olarak
+    yorumlandı (`[eth] failed to parse url .../Verifier.sol` hatası) —
+    yani gerçek pyo3 bağlamasının kabul ettiği pozisyonel sıra,
+    `ezkl.pyi`'nin belgelediğinden FARKLI (dokümantasyon güvenilir
+    referans değilmiş). Kwarg kullanmak bu sıralama belirsizliğinden
+    tamamen bağımsız — parametre ADLARI `ezkl.pyi`'den doğru alındığı
+    sürece hangi pozisyonel sırayı kullandığı önemsiz.
     """
     if not anvil.accounts:
         raise RuntimeError("anvil hesap listesi boş — deploy için hesap yok.")
@@ -208,7 +219,15 @@ def deploy_and_verify_via_ezkl_native(sol_path: Path, proof_path: Path, work_dir
 
     addr_path = work_dir / "verifier_address.txt"
     print("[toy_pipeline]  ezkl.deploy_evm (native) ile deploy ediliyor...")
-    run_async(ezkl.deploy_evm, str(addr_path), str(sol_path), anvil.rpc_url, "verifier", 200, private_key_hex)
+    run_async(
+        ezkl.deploy_evm,
+        addr_path=str(addr_path),
+        sol_code_path=str(sol_path),
+        rpc_url=anvil.rpc_url,
+        contract_type="verifier",
+        optimizer_runs=200,
+        private_key=private_key_hex,
+    )
     if not addr_path.exists():
         raise RuntimeError(f"deploy_evm sonrası adres dosyası yok: {addr_path}")
     address = addr_path.read_text(encoding="utf-8").strip()

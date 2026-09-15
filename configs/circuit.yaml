@@ -30,10 +30,14 @@ embed_mode: matmul
 # taramasında 9 ve 10 HER k/embed_mode kombinasyonunda calibrate_settings'te
 # düştü ("[halo2] General synthesis error" / "significant bit truncation
 # ... try lowering the scale"). Çalışan tavan 8 — en yüksek ÇALIŞAN scale
-# (= mümkün olan en iyi fidelity) bu yüzden seçildi. max_abs_error≈0.133
-# (k=1, matmul, scale=8) — decomposition uyarısı {6,7,8,9,10} taramasının
-# HİÇBİR noktasında görülmedi (0), fatal hatalar hep calibrate_settings
-# aşamasında çıktı, prove sırasında değil.
+# (= mümkün olan en iyi fidelity) bu yüzden seçildi. max_abs_error (matmul,
+# scale=8): k=1→0.1331 (%3,21 bağıl), k=4→0.137 (%3,205), k=8→0.1658
+# (%3,879) — decomposition uyarısı {6,7,8,9,10} taramasının HİÇBİR
+# noktasında görülmedi (0), fatal hatalar hep calibrate_settings
+# aşamasında çıktı, prove sırasında değil. Bağıl hata ispatın
+# GEÇERLİLİĞİNİ etkilemiyor (ispat kuantize hesabı doğruluyor, ağırlık
+# bağlaması taahhüt hash'iyle yapılıyor) — bkz. docs/phase_c_report.md
+# "Fidelity" bölümü.
 scale: 8
 
 # bit_width: KULLANILMIYOR. ezkl==23.0.5'in gerçek Python API'si
