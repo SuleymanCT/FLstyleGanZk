@@ -687,18 +687,37 @@ GEREKLİ olduğunu somutlaştırıyor.
 
 **BİLİNÇLİ TEST SINIRI:** `contracts/RoundManager.sol`, `chain/client.py:
 RoundManagerClient`, `orchestrator/round_runner.py`, `scripts/deploy_contracts.py`,
-`storage/ipfs.py`'nin gerçek IPFS/ezkl/anvil/solc/web3 kısımları hiçbiri
+`storage/ipfs.py`'nin gerçek IPFS/ezkl/anvil/solc kısımları hiçbiri
 yerelde çalıştırılamaz/test edilemez — SADECE Colab'da
 (`tests/test_contracts.py` + gerçek bir `round_runner.py` koşumu)
 doğrulanabilir. Saf/dosya-tabanlı yardımcılar (`challenge.py`,
 `schedule.py`, `aggregate.py`, `round_runner.py`'nin `load_progress`/
 `save_progress`/`compute_weight_commitment`/`load_circuit_config`'i,
-`storage/ipfs.py: is_valid_cid`) 40+ testle yerelde GERÇEKTEN doğrulandı
-(216 passed, 2 skipped toplam).
+`storage/ipfs.py: is_valid_cid`) 40+ testle yerelde GERÇEKTEN doğrulandı.
+`web3` bu turda yerelde de kuruldu (`onnx`/`onnxruntime` emsaliyle —
+Colab'a özgü değil, sade bir Python paketi) — `chain/client.py: _build_tx`
+artık yerelde de GERÇEKTEN test ediliyor (222 passed, 2 skipped toplam).
+
+**1. Colab koşumu — TEK hata, düzeltildi:** ezkl ispatı üretildi,
+Verifier.sol (14.921 byte) + RoundManager.sol (6.867 byte) derlendi,
+anvil ayağa kalktı, `deploy_bytecode` ile Verifier deploy edildi — TEK
+hata `RoundManagerClient.deploy_contract`'ta: `TypeError: Unknown kwargs:
+['gasPrice']` (işlem sözlüğünde hem EIP-1559 hem legacy gas alanı
+bir aradaydı). Kök sebep: `factory.constructor(...).build_transaction({})`
+anvil'in EIP-1559 desteğini görüp `maxFeePerGas`/`maxPriorityFeePerGas`'ı
+KENDİSİ ekliyordu, `_send_and_wait`/`RoundManagerClient._send` ise bunun
+ÜSTÜNE KOŞULSUZ `gasPrice` de ekliyordu. **Düzeltme:** `chain/client.py: _build_tx`
+— TEK ortak yol, `base_tx`'te hangi tip zaten varsa ona sadık kalır,
+hiçbiri yoksa EIP-1559 ekler, ikisi birden varsa `ValueError` ile durur
+(sessizce "düzeltmez"). `_send_and_wait`/`deploy_contract`/`RoundManagerClient._send`
+artık HEPSİ bu tek yoldan geçiyor. `tests/test_client.py` (6 test,
+sentetik `w3` nesnesiyle) bu iki gas biçiminin ASLA bir arada
+üretilmediğini yerelde GERÇEKTEN kanıtlıyor.
 
 **Kabul:** testler yeşil, gas rakamları raporlandı. **HENÜZ KARŞILANMADI**
-— Colab'da `tests/test_contracts.py` koşulup gerçek gas/zaman rakamları
-raporlanana kadar bu faz "tamamlandı" sayılmayacak.
+— Colab'da `tests/test_contracts.py`'nin TAMAMI koşulup (bu düzeltmeyle)
+gerçek gas/zaman rakamları raporlanana kadar bu faz "tamamlandı"
+sayılmayacak.
 
 ## Faz E (yerel + Colab) — Replay
 

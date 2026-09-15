@@ -2,8 +2,18 @@
 (`Web3Client`) ve `contracts/RoundManager.sol`'un her fonksiyonu için tip-
 güvenli bir metod (`RoundManagerClient`, Faz D).
 
-BİLİNÇLİ TEST SINIRI: gerçek bir EVM node'una (anvil) bağlantı gerektirir,
-yerelde test edilemez — sadece Colab'da gerçek koşumda doğrulanabilir.
+`_build_tx`: TÜM işlem-gönderen metodların ortak yolu — EIP-1559
+(`maxFeePerGas`/`maxPriorityFeePerGas`) ya da legacy (`gasPrice`)
+kullanır, ASLA İKİSİNİ BİRDEN üretmez (Faz D'nin gerçek Colab koşumunda
+`RoundManagerClient.deploy_contract`'ın tam bunu yapıp `TypeError:
+Unknown kwargs: ['gasPrice']` ile patladığı gerçek bir hatanın
+düzeltmesi). Sentetik bir `w3` nesnesiyle `tests/test_client.py`'de
+GERÇEKTEN test edilir (`web3` yerelde de kurulabilir — Colab'a özgü
+değil, `onnx`/`onnxruntime` gibi sade bir Python paketi).
+
+BİLİNÇLİ TEST SINIRI (kısmi): gerçek bir EVM node'una (anvil) bağlantı
+gerektiren kısımlar (`Web3Client.__init__` ve sonrası) yerelde test
+edilemez — sadece Colab'da gerçek koşumda doğrulanabilir.
 """
 
 from __future__ import annotations
@@ -11,6 +21,52 @@ from __future__ import annotations
 from web3 import Web3
 
 from chain.anvil import normalize_private_key_hex
+
+
+def _build_tx(w3: Web3, base_tx: dict, from_address: str) -> dict:
+    """Tüm işlem-gönderen metodların TEK ortak yolu — EIP-1559
+    (`maxFeePerGas`/`maxPriorityFeePerGas`) ya da legacy (`gasPrice`)
+    kullanır, ASLA İKİSİNİ BİRDEN üretmez.
+
+    Faz D'nin gerçek Colab koşumunda `RoundManagerClient.deploy_contract`
+    tam bunun tersini yapıp patladı: `factory.constructor(...).build_transaction({})`
+    anvil'in EIP-1559 desteğini görüp `maxFeePerGas`/`maxPriorityFeePerGas`'ı
+    KENDİSİ ekliyordu, sonra (eski) `_send_and_wait` bunun ÜSTÜNE
+    `tx.setdefault("gasPrice", ...)` ile legacy alanı da ekliyordu —
+    `account.sign_transaction`/eth-account ikisini bir arada görünce
+    `TypeError: Unknown kwargs: ['gasPrice']` ile patlıyordu.
+
+    `base_tx`'te (`build_transaction()`'ın halihazırda doldurmuş olabileceği)
+    EIP-1559 ya da legacy alanlarından HANGİSİ zaten varsa ona sadık
+    kalınır (elle EKLEME/DEĞİŞTİRME yapılmaz); hiçbiri yoksa (ör.
+    `deploy_bytecode`/`send_raw_call`'un elle kurduğu ham sözlük) anvil'in
+    (ve çoğu modern EVM'in) desteklediği EIP-1559 BURADA eklenir. İkisi
+    aynı anda bulunursa (olmaması gereken bir durum) sessizce
+    "düzeltilmez" — net bir `ValueError` ile durur."""
+    tx = {**base_tx, "from": from_address}
+    tx.setdefault("nonce", w3.eth.get_transaction_count(from_address))
+    tx.setdefault("chainId", w3.eth.chain_id)
+
+    has_eip1559 = "maxFeePerGas" in tx or "maxPriorityFeePerGas" in tx
+    has_legacy = "gasPrice" in tx
+    if has_eip1559 and has_legacy:
+        raise ValueError(
+            f"[chain.client] işlem hem EIP-1559 (maxFeePerGas/maxPriorityFeePerGas) hem legacy "
+            f"(gasPrice) gas alanı içeriyor — ikisi ASLA bir arada olmamalı. tx anahtarları: {sorted(tx.keys())}"
+        )
+    if not has_eip1559 and not has_legacy:
+        priority_fee = w3.eth.max_priority_fee
+        base_fee = w3.eth.get_block("latest")["baseFeePerGas"]
+        tx["maxPriorityFeePerGas"] = priority_fee
+        tx["maxFeePerGas"] = base_fee * 2 + priority_fee
+
+    if "gas" not in tx:
+        try:
+            tx["gas"] = int(w3.eth.estimate_gas(tx) * 1.2)
+        except Exception as e:  # noqa: BLE001 - tanılama amaçlı, net mesajla yeniden fırlatılıyor
+            raise RuntimeError(f"[chain.client] gas tahmini başarısız: {e}. tx={tx}") from e
+
+    return tx
 
 
 def _raw_transaction_bytes(signed_tx) -> bytes:
@@ -36,17 +92,7 @@ class Web3Client:
 
     def _send_and_wait(self, tx: dict, private_key: str):
         account = self.w3.eth.account.from_key(private_key)
-        tx = {**tx, "from": account.address}
-        tx.setdefault("nonce", self.w3.eth.get_transaction_count(account.address))
-        tx.setdefault("chainId", self.w3.eth.chain_id)
-        tx.setdefault("gasPrice", self.w3.eth.gas_price)
-
-        if "gas" not in tx:
-            try:
-                tx["gas"] = int(self.w3.eth.estimate_gas(tx) * 1.2)
-            except Exception as e:  # noqa: BLE001 - tanılama amaçlı, net mesajla yeniden fırlatılıyor
-                raise RuntimeError(f"[Web3Client] gas tahmini başarısız: {e}. tx={tx}") from e
-
+        tx = _build_tx(self.w3, tx, account.address)
         signed = account.sign_transaction(tx)
         tx_hash = self.w3.eth.send_raw_transaction(_raw_transaction_bytes(signed))
         receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
@@ -134,14 +180,16 @@ class RoundManagerClient(Web3Client):
     def _send(self, fn_call, private_key: str) -> tuple[dict, int]:
         private_key = "0x" + normalize_private_key_hex(private_key)
         account = self.w3.eth.account.from_key(private_key)
-        tx = fn_call.build_transaction(
-            {
-                "from": account.address,
-                "nonce": self.w3.eth.get_transaction_count(account.address),
-                "chainId": self.w3.eth.chain_id,
-                "gasPrice": self.w3.eth.gas_price,
-            }
-        )
+        # "from" burada VERİLİYOR (build_transaction()'a) — onlyOwner/
+        # onlyRegisteredSite gibi msg.sender'a bağlı modifier'ların gas
+        # tahmini sırasında DOĞRU hesap üzerinden değerlendirilmesi için.
+        # gas/nonce/chainId/EIP-1559 alanları KASITLI OLARAK burada
+        # verilmiyor — _build_tx tek yerden, çakışmasız şekilde dolduruyor
+        # (bkz. _build_tx docstring'i — bu satırlar TAM BURADA eskiden
+        # "gasPrice" ekleyip Faz D'nin gerçek Colab koşumunda
+        # "TypeError: Unknown kwargs: ['gasPrice']" hatasına yol açmıştı).
+        tx = fn_call.build_transaction({"from": account.address})
+        tx = _build_tx(self.w3, tx, account.address)
         signed = account.sign_transaction(tx)
         tx_hash = self.w3.eth.send_raw_transaction(_raw_transaction_bytes(signed))
         receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=60)
