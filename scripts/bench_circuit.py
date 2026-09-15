@@ -2,9 +2,27 @@
 """Faz C3: gerçek mapping devresi için ezkl benchmark ızgarası.
 
 Izgara boyutları: k in {1,4,8} x embed_mode in {matmul,gather} x
-scale in {8,11,13} (varsayılanlar; hepsi CLI'dan konfigüre edilebilir).
+scale in {6,7,8,9,10} (varsayılanlar; hepsi CLI'dan konfigüre edilebilir).
 Faz C2'nin ürettiği `{onnx_dir}/mapping_k{k}_{embed_mode}.onnx`
 dosyalarını girdi alır (bkz. circuits/export_mapping.py).
+
+## Ölçek ızgarası neden {6,7,8,9,10} (eskiden {8,11,13})
+
+`scripts/diagnose_calibration.py`'nin ilk Colab koşumu üç net bulgu
+verdi (bkz. `docs/phase_c_calibration.md`):
+1. `calibrate_settings(..., scales=[scale])` kwarg'ı GERÇEKTEN çalışıyor
+   (scale=8, target=resources) — `max_abs_error=0.133`, `logrows=19`.
+2. **scale=11 ve scale=13 DÜŞTÜ** ("[halo2] General synthesis error",
+   "[tensor] significant bit truncation ... try lowering the scale") —
+   beklentinin TERSİ: DÜŞÜK ölçek çalışıyor, YÜKSEK ölçek düşüyor.
+   Muhtemel sebep: `mapping.fc1`'in 512 terimlik iç çarpımları yüksek
+   ölçekte decomposition tabanını aşıyor.
+3. scale=16'da ezkl'in Rust tarafı gerçek bir `pyo3_runtime.PanicException`
+   fırlattı (BaseException'dan türer, `except Exception` YAKALAMAZ).
+
+Bu yüzden ızgara artık ÇALIŞAN sınırın (scale=8) etrafında ince bir
+tarama ({6,7,8,9,10}) yapıyor — amaç: en yüksek ÇALIŞAN scale'i bulmak
+(yüksek scale = daha iyi fidelity, ama bu devrede bir yerde kesiliyor).
 
 ## Tasarım: her kombinasyon AYRI bir alt süreçte çalışır
 
@@ -27,25 +45,47 @@ dosyalarını girdi alır (bkz. circuits/export_mapping.py).
    kombinasyonlara devam eder ("bir kombinasyon patlarsa diğerlerine
    devam et" gereksinimi).
 
-## Bilinçli varsayımlar (Colab'da doğrulanacak)
+## Sabit scale: `calibrate_settings(..., scales=[scale])` (DOĞRULANDI)
 
-- **Sabit scale zorlama:** `ezkl.calibrate_settings` scale'i OTOMATİK
-  seçer — bizim istediğimiz (k, embed_mode, scale) ızgarasında `scale`
-  KONTROLLÜ bir değişken olmalı. Bu yüzden `calibrate_settings`
-  çalıştıktan SONRA `settings.json` diskten okunup `run_args.input_scale`/
-  `param_scale` alanları istenen `scale` değerine ZORLA yazılıp geri
-  kaydediliyor, `compile_circuit` bu düzeltilmiş dosyayla çalışıyor.
-  `settings.json`'da beklenen `run_args` anahtarı yoksa net bir UYARI
-  basılıp zorlama atlanıyor (sessizce geçilmiyor).
-- **Çoklu-girdi input.json formatı:** ONNX grafiğinin iki girdisi var
-  (`z`, `c`). ezkl'nin çoklu-girdi `input.json` şeması resmi olarak
-  `{"input_data": [flat_girdi_1, flat_girdi_2, ...]}` (graf girdi
-  sırasıyla, `export_to_onnx`'teki `input_names=["z","c"]` sırasıyla
-  eşleşir) olarak varsayılıyor — Colab'da doğrulanacak.
-- **Devre istatistikleri:** `settings.json`'daki olası anahtarlar
-  (`num_rows`, `run_args.logrows`, `required_lookups` vb.) best-effort
-  toplanır; şema sürümden sürüme değişebileceğinden hiçbiri zorunlu
-  değildir, ham `settings.json` dosyası zaten `work_dir` altında kalıcı.
+Önceki tur (`force_settings_scale`: calibrate SONRASI settings.json'u
+elle yamama) `scripts/diagnose_calibration.py`'nin Colab koşumunda
+**hiçbir ölçekte tutmadı** — `compile_circuit` hâlâ calibrate'in
+seçtiği scale'i kullanıyordu. Doğru/çalışan yöntem, `ezkl==23.0.5`'in
+(`v23.0.5` etiketi) `ezkl.pyi`'sinde belgelenen gerçek `scales:
+Optional[Sequence[int]]` parametresini DOĞRUDAN `calibrate_settings`'e
+vermek — bu Colab'da ampirik olarak ÇALIŞTI (scale=8, target=resources).
+`PyRunArgs.input_scale`/`param_scale` bu yüzden ARTIK gen_settings'te
+verilmiyor (calibrate zaten `scales=[scale]` ile scale'i kontrol
+ediyor); calibrate SONRASI gerçekleşen `input_scale`/`param_scale`/
+`logrows` `read_realized_scale` ile okunup raporlanıyor (istenen ile
+gerçekleşen FARKLI olabilir, ikisi de kaydediliyor).
+
+## Çoklu-girdi input.json formatı (DOĞRULANDI)
+
+`{"input_data": [flat_z, flat_c]}` — `ezkl`'in `src/graph/input.rs`
+kaynağından (`DataSource = Vec<Vec<FileSourceInner>>`) doğrulanmıştı;
+diagnose_calibration'ın Colab koşumunda ONNX-şekli/input.json çapraz
+kontrolü UYUŞTU ve kalibrasyon en azından scale=8'de gerçekten BAŞARILI
+oldu — şema sorunu DEĞİLMİŞ, sorun scale seçimiymiş.
+
+## Devre istatistikleri (best-effort, değişmedi)
+
+`settings.json`'daki olası anahtarlar (`num_rows`, `run_args.logrows`,
+`required_lookups` vb.) best-effort toplanır; şema sürümden sürüme
+değişebileceğinden hiçbiri zorunlu değildir, ham `settings.json` dosyası
+zaten `work_dir` altında kalıcı.
+
+## pyo3 `PanicException` — `BaseException` olarak yakalanıyor
+
+ezkl'nin Rust tarafı bazı (scale, devre) kombinasyonlarında GERÇEK bir
+Rust panic'i `pyo3_runtime.PanicException` olarak fırlatabiliyor
+(Colab'da scale=16'da gözlendi) — bu `BaseException`'dan türer,
+`except Exception` YAKALAMAZ ve script'i düşürür. `run_worker`'ın dış
+`try/except`'i bu yüzden `KeyboardInterrupt`/`SystemExit` HARİÇ tüm
+`BaseException`'ı yakalar; panik özel olarak `status="panic"` ile
+işaretlenir (sıradan `"failed"`'den ayrı — hangi kombinasyonların
+ezkl'i gerçekten ÇÖKERTTİĞÜ, hangilerinin sadece normal bir hata
+döndürdüğü karışmasın).
 
 BİLİNÇLİ TEST SINIRI: `run_ezkl_pipeline`/`run_prove_and_verify`/`run_worker`
 ve zincir/solc adımları `ezkl`+`anvil`+`solc`+`web3` gerektirir, SADECE
@@ -74,6 +114,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 from pathlib import Path
 
 import torch
@@ -91,7 +132,10 @@ except ImportError:  # pragma: no cover - yerelde (Windows) her zaman buraya dü
 
 DEFAULT_K_VALUES = (1, 4, 8)
 DEFAULT_EMBED_MODES = ("matmul", "gather")  # matmul once: ArgMax/Gather'siz, DEFAULT_ONNX_MODE ile tutarli
-DEFAULT_SCALES = (8, 11, 13)
+# {8,11,13} degil {6,7,8,9,10}: diagnose_calibration.py'nin Colab bulgusu -
+# scale=8 calisiyor, 11/13 dusuyor, 16 panikliyor. Calisan sinirin (8)
+# etrafinda ince tarama yapip en yuksek CALISAN scale'i buluyoruz.
+DEFAULT_SCALES = (6, 7, 8, 9, 10)
 DEFAULT_TIMEOUT_SECONDS = 1800.0
 
 INPUT_VISIBILITY = "private"
@@ -164,35 +208,29 @@ def extract_circuit_stats(settings_json: dict) -> dict:
     return stats
 
 
-def force_settings_scale(settings_path: str, scale: int) -> dict:
-    """`calibrate_settings` sonrası settings.json'u okuyup `run_args.input_scale`/
-    `param_scale`'i istenen sabit `scale`'e zorlar (calibrate'in otomatik
-    seçimini EZER — ızgaradaki `scale` ekseninin gerçekten uygulandığını
-    garantiler) ve dosyayı geri yazar. Güncellenmiş dict'i döner. `run_args`
-    anahtarı beklenen şekilde değilse NET bir uyarı basıp dosyaya dokunmadan
-    döner (sessizce geçmez)."""
+def read_realized_scale(settings_path: str) -> dict:
+    """`calibrate_settings(..., scales=[scale])` sonrası settings.json'dan
+    GERÇEKLEŞEN `input_scale`/`param_scale`/`logrows`'u okur (istenenle
+    aynı olması BEKLENİR ama garanti değildir — ikisi de ayrı ayrı
+    kaydediliyor). `run_args` beklenen şekilde değilse boş dict + UYARI."""
     with open(settings_path, encoding="utf-8") as f:
         settings_json = json.load(f)
-
     run_args = settings_json.get("run_args")
     if not isinstance(run_args, dict):
-        print(
-            f"[bench_circuit] UYARI: settings.json'da beklenen 'run_args' dict'i yok "
-            f"(anahtarlar: {list(settings_json.keys())}) — scale={scale} ZORLANAMADI, "
-            f"calibrate_settings'in seçtiği scale kullanılacak."
-        )
-        return settings_json
+        print(f"[bench_circuit] UYARI: settings.json'da beklenen 'run_args' dict'i yok (anahtarlar: {list(settings_json.keys())}).")
+        return {}
+    return {"input_scale": run_args.get("input_scale"), "param_scale": run_args.get("param_scale"), "logrows": run_args.get("logrows")}
 
-    calibrated_scale = run_args.get("input_scale")
-    if calibrated_scale != scale:
-        print(f"[bench_circuit] calibrate_settings scale={calibrated_scale} seçti, istenen {scale}'e zorlanıyor.")
-    run_args["input_scale"] = scale
-    run_args["param_scale"] = scale
 
-    assert_writable(settings_path)
-    with open(settings_path, "w", encoding="utf-8") as f:
-        json.dump(settings_json, f)
-    return settings_json
+def classify_exception_status(e: BaseException) -> str:
+    """ezkl'nin Rust tarafı bazı kombinasyonlarda gerçek bir Rust panic'i
+    `pyo3_runtime.PanicException` olarak fırlatabiliyor (BaseException'dan
+    türer, `except Exception` YAKALAMAZ — Colab'da scale=16'da gözlendi).
+    Bunu sıradan bir "failed"den AYRI "panic" olarak işaretliyoruz —
+    hangi kombinasyonların ezkl'i gerçekten çökerttiği kaybolmasın."""
+    if type(e).__name__ == "PanicException":
+        return "panic"
+    return "failed"
 
 
 def build_multi_input_json(z: torch.Tensor, c: torch.Tensor) -> dict:
@@ -245,9 +283,9 @@ def _cell(value) -> str:
 
 def render_markdown_table(results: dict) -> str:
     headers = [
-        "kombinasyon", "durum", "gen_settings+calibrate(s)", "compile(s)", "setup(s)",
+        "kombinasyon", "durum", "gerceklesen_scale", "gen_settings+calibrate(s)", "compile(s)", "setup(s)",
         "gen_witness(s)", "prove(s)", "verify_offchain(s)", "proof(B)", "pk(B)", "vk(B)",
-        "tepe_RAM(KB)", "decomposition_uyari", "max_abs_error", "deployed_bytecode(B)",
+        "tepe_RAM(KB)", "decomposition_uyari", "max_abs_error", "max_abs_error_%", "deployed_bytecode(B)",
         "EIP170_asiyor", "verify_gas", "hata",
     ]
     lines = ["| " + " | ".join(headers) + " |", "|" + "|".join(["---"] * len(headers)) + "|"]
@@ -257,9 +295,11 @@ def render_markdown_table(results: dict) -> str:
         gen_calib = None
         if "gen_settings" in timings or "calibrate_settings" in timings:
             gen_calib = timings.get("gen_settings", 0.0) + timings.get("calibrate_settings", 0.0)
+        realized_scale = r.get("realized_scale") or {}
         row = [
             key,
             r.get("status", "?"),
+            _cell(realized_scale.get("input_scale") if isinstance(realized_scale, dict) else realized_scale),
             _cell(gen_calib),
             _cell(timings.get("compile_circuit")),
             _cell(timings.get("setup")),
@@ -272,6 +312,7 @@ def render_markdown_table(results: dict) -> str:
             _cell(r.get("peak_rss_kb")),
             _cell(r.get("decomposition_warning_count")),
             _cell(r.get("max_abs_error")),
+            _cell(r.get("max_abs_error_relative_pct")),
             _cell(r.get("deployed_bytecode_size")),
             _cell(r.get("exceeds_eip170")),
             _cell(r.get("verify_gas")),
@@ -299,26 +340,31 @@ def run_ezkl_pipeline(onnx_path: Path, input_json_path: Path, work_dir: Path, sc
     }
     timings: dict = {}
 
+    # NOT: input_scale/param_scale BURADA verilmiyor (gen_settings zamanında) —
+    # diagnose_calibration.py'nin Colab bulgusuna göre bu yöntem (+ calibrate
+    # sonrası settings.json'u elle yamama, force_settings_scale) HİÇBİR ölçekte
+    # tutmadı. Çalışan yöntem: calibrate_settings'e scales=[scale] vermek.
     run_args = ezkl.PyRunArgs()
     run_args.input_visibility = INPUT_VISIBILITY
     run_args.param_visibility = PARAM_VISIBILITY
     run_args.output_visibility = OUTPUT_VISIBILITY
-    run_args.input_scale = scale
-    run_args.param_scale = scale
 
-    print(f"[bench_circuit]  gen_settings (scale={scale})...")
+    print("[bench_circuit]  gen_settings (scale henüz belirlenmedi, calibrate belirleyecek)...")
     t0 = time.perf_counter()
     ok = run_async(ezkl.gen_settings, str(onnx_path), str(paths["settings"]), py_run_args=run_args)
     if ok is not True:
         raise RuntimeError(f"gen_settings True döndürmedi: {ok!r}")
     timings["gen_settings"] = time.perf_counter() - t0
 
-    print("[bench_circuit]  calibrate_settings (target=resources)...")
+    print(f"[bench_circuit]  calibrate_settings (target=resources, scales=[{scale}])...")
     t0 = time.perf_counter()
-    run_async(ezkl.calibrate_settings, str(input_json_path), str(onnx_path), str(paths["settings"]), "resources")
+    run_async(ezkl.calibrate_settings, str(input_json_path), str(onnx_path), str(paths["settings"]), "resources", scales=[scale])
     timings["calibrate_settings"] = time.perf_counter() - t0
 
-    force_settings_scale(str(paths["settings"]), scale)
+    realized_scale = read_realized_scale(str(paths["settings"]))
+    print(f"[bench_circuit]  istenen scale={scale} -> gerçekleşen: {realized_scale}")
+    if realized_scale.get("input_scale") != scale:
+        print(f"[bench_circuit]  UYARI: gerçekleşen input_scale ({realized_scale.get('input_scale')}) istenenden ({scale}) FARKLI.")
 
     print("[bench_circuit]  compile_circuit...")
     t0 = time.perf_counter()
@@ -352,6 +398,8 @@ def run_ezkl_pipeline(onnx_path: Path, input_json_path: Path, work_dir: Path, sc
         "paths": paths,
         "timings": timings,
         "circuit_stats": circuit_stats,
+        "requested_scale": scale,
+        "realized_scale": realized_scale,
         "pk_size_bytes": paths["pk"].stat().st_size,
         "vk_size_bytes": paths["vk"].stat().st_size,
     }
@@ -425,6 +473,10 @@ def run_worker(args: argparse.Namespace) -> int:
 
         reference = load_reference(args.reference_dir, args.k)
         z, c = reference["z"], reference["c"]
+        # w'nin gerçek büyüklüğü (referans, num_ws=0 dilimi) — ebeveyn, alt sürecin
+        # stdout'undan ayrıştırdığı max_abs_error'u buna göre ORANLAYIP (%) fidelity/
+        # scale ödünleşimini bağlamsallaştırıyor (bkz. run_combo_in_subprocess).
+        result["w_abs_max"] = reference["w"][:, 0, :].abs().max().item()
 
         input_json_path = work_dir / "input.json"
         write_json_file(build_multi_input_json(z, c), str(input_json_path))
@@ -469,10 +521,13 @@ def run_worker(args: argparse.Namespace) -> int:
 
         result["status"] = "success"
 
-    except Exception as e:  # noqa: BLE001 - kombinasyon başarısızlığı yakalanıp raporlanıyor, koşu düşmüyor
-        result["status"] = "failed"
-        result["error_summary"] = f"{type(e).__name__}: {e}"
-        print(f"[bench_circuit] KOMBİNASYON BAŞARISIZ ({key}): {result['error_summary']}")
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as e:  # noqa: BLE001 - pyo3 PanicException DAHIL tüm hatalar burada yakalanıp raporlanıyor, koşu düşmüyor
+        result["status"] = classify_exception_status(e)
+        result["error_summary"] = f"{type(e).__module__}.{type(e).__name__}: {e}"
+        print(f"[bench_circuit] KOMBİNASYON {result['status'].upper()} ({key}): {result['error_summary']}")
+        print(traceback.format_exc())
 
     finally:
         result["total_wall_seconds"] = time.perf_counter() - t_start
@@ -543,6 +598,14 @@ def run_combo_in_subprocess(combo: dict, onnx_dir: str, reference_dir: str, benc
     result["decomposition_warning_count"] = count_decomposition_warnings(stdout or "")
     result["max_abs_error"] = extract_max_abs_error(stdout or "")
     result["log_path"] = str(log_path)
+
+    # scale/fidelity ödünleşimi için: max_abs_error'u w'nin gerçek büyüklüğüne (worker'ın
+    # kendi kaydettiği w_abs_max) oranlayıp yüzde olarak da raporluyoruz (makale tablosu).
+    w_abs_max = result.get("w_abs_max")
+    if result.get("max_abs_error") is not None and w_abs_max:
+        result["max_abs_error_relative_pct"] = 100.0 * result["max_abs_error"] / w_abs_max
+    else:
+        result["max_abs_error_relative_pct"] = None
 
     return result
 

@@ -389,6 +389,34 @@ sahte çıktı yok.
   kendisi bu turda DEĞİŞTİRİLMEDİ — teşhis sonucu gelene kadar bilerek
   ertelendi.
 
+  **Teşhis sonucu (Colab, ÇÖZÜLDÜ) — bkz. `docs/phase_c_calibration.md`
+  (üç bulgu detaylı):**
+  1. Şema DOĞRUYMUŞ (b elendi); doğru yöntem `calibrate_settings(...,
+     scales=[scale])` — bu Colab'da GERÇEKTEN ÇALIŞTI (scale=8,
+     `max_abs_error=0.133`, `logrows=19`). Eski `force_settings_scale`
+     yöntemi (calibrate SONRASI settings.json'u elle yamama) hiçbir
+     ölçekte tutmamış — `bench_circuit.py`'den KALDIRILDI, yerine
+     `read_realized_scale` (sadece okur, zorlamaz) geldi.
+  2. Beklenenin TERSİ: scale=8 çalışıyor, scale=11/13 `calibrate_settings`'te
+     düşüyor ("[halo2] General synthesis error" / "significant bit
+     truncation"), scale=16 GERÇEK BİR RUST PANİĞİ fırlatıyor
+     (`pyo3_runtime.PanicException`). Muhtemel sebep: `mapping.fc1`'in
+     512 terimlik iç çarpımları yüksek ölçekte decomposition tabanını
+     aşıyor — makale için somut bir "devre boyutu büyüdükçe kullanılabilir
+     scale aralığı daralıyor" bulgusu. Izgara `{8,11,13}`'ten `{6,7,8,9,10}`'a
+     değiştirildi (çalışan sınırın etrafında ince tarama).
+  3. `PanicException` `BaseException`'dan türüyor, `except Exception`
+     yakalamıyordu — hem `bench_circuit.py: run_worker` hem
+     `diagnose_calibration.py`'nin ilgili fonksiyonları artık
+     `except (KeyboardInterrupt, SystemExit): raise` + `except
+     BaseException` deseniyle bunu yakalayıp `status="panic"` (sıradan
+     `"failed"`'den ayrı) işaretliyor, koşu düşmüyor
+     (`classify_exception_status`, iki script'te de ortak kullanılıyor).
+  4. `bench_circuit.py` artık her kombinasyon için `max_abs_error`'u
+     referans `w`'nin gerçek büyüklüğüne oranlayıp `max_abs_error_relative_pct`
+     (scale=8'de ~%12,5) olarak da raporluyor — scale/fidelity ödünleşim
+     tablosu makale için hazır hale geldi.
+
 - **C4** Kuantizasyon etkisi: w_q ve fp32 w arasında kosinüs benzerliği
   ve L2 farkı, DR sınıfı başına ayrı.
 

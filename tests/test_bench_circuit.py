@@ -18,12 +18,13 @@ import torch
 from scripts.bench_circuit import (
     build_grid,
     build_multi_input_json,
+    classify_exception_status,
     combo_key,
     count_decomposition_warnings,
     extract_circuit_stats,
     extract_max_abs_error,
-    force_settings_scale,
     load_bench_results,
+    read_realized_scale,
     render_markdown_table,
     save_bench_results,
     write_json_file,
@@ -91,32 +92,38 @@ def test_extract_circuit_stats_handles_missing_keys_gracefully():
     assert extract_circuit_stats({"run_args": "not_a_dict"}) == {}
 
 
-def test_force_settings_scale_overwrites_run_args(tmp_path):
+def test_read_realized_scale_reads_run_args(tmp_path):
     settings_path = tmp_path / "settings.json"
-    settings_path.write_text(json.dumps({"run_args": {"input_scale": 7, "param_scale": 7, "other": "x"}}), encoding="utf-8")
+    settings_path.write_text(json.dumps({"run_args": {"input_scale": 8, "param_scale": 8, "logrows": 19, "other": "x"}}), encoding="utf-8")
 
-    result = force_settings_scale(str(settings_path), scale=13)
+    result = read_realized_scale(str(settings_path))
 
-    assert result["run_args"]["input_scale"] == 13
-    assert result["run_args"]["param_scale"] == 13
-    assert result["run_args"]["other"] == "x"
-
+    assert result == {"input_scale": 8, "param_scale": 8, "logrows": 19}
+    # dosyaya DOKUNULMAMALI (force_settings_scale'in aksine, artık sadece okuyoruz)
     with open(settings_path, encoding="utf-8") as f:
         on_disk = json.load(f)
-    assert on_disk["run_args"]["input_scale"] == 13
+    assert on_disk["run_args"]["other"] == "x"
 
 
-def test_force_settings_scale_warns_and_skips_when_run_args_missing(tmp_path, capsys):
+def test_read_realized_scale_warns_and_returns_empty_when_run_args_missing(tmp_path, capsys):
     settings_path = tmp_path / "settings.json"
     settings_path.write_text(json.dumps({"foo": "bar"}), encoding="utf-8")
 
-    result = force_settings_scale(str(settings_path), scale=13)
+    result = read_realized_scale(str(settings_path))
 
-    assert result == {"foo": "bar"}
+    assert result == {}
     assert "UYARI" in capsys.readouterr().out
-    with open(settings_path, encoding="utf-8") as f:
-        on_disk = json.load(f)
-    assert on_disk == {"foo": "bar"}
+
+
+def test_classify_exception_status_detects_panic_by_type_name():
+    class PanicException(BaseException):
+        pass
+
+    assert classify_exception_status(PanicException("left: 160, right: 144")) == "panic"
+
+
+def test_classify_exception_status_returns_failed_for_normal_exceptions():
+    assert classify_exception_status(RuntimeError("boom")) == "failed"
 
 
 def test_build_multi_input_json_shapes_match_flattened_tensors():
@@ -149,6 +156,7 @@ def test_render_markdown_table_contains_header_and_rows():
     results = {
         "k1_matmul_scale8": {
             "status": "success",
+            "realized_scale": {"input_scale": 8, "param_scale": 8, "logrows": 19},
             "timings": {"gen_settings": 1.0, "calibrate_settings": 2.0, "compile_circuit": 3.0, "setup": 4.0,
                         "gen_witness": 0.5, "prove": 5.0, "verify_offchain": 0.1},
             "proof_size_bytes": 1234,
@@ -156,16 +164,20 @@ def test_render_markdown_table_contains_header_and_rows():
             "vk_size_bytes": 222,
             "peak_rss_kb": 500000,
             "decomposition_warning_count": 3,
-            "max_abs_error": 0.0003,
+            "max_abs_error": 0.133,
+            "max_abs_error_relative_pct": 12.5,
             "deployed_bytecode_size": 15000,
             "exceeds_eip170": False,
             "verify_gas": 250000,
         },
         "k1_matmul_scale11": {"status": "failed", "error_summary": "RuntimeError: patladi", "timings": {}},
+        "k1_matmul_scale16": {"status": "panic", "error_summary": "pyo3_runtime.PanicException: left: 160, right: 144", "timings": {}},
     }
     table = render_markdown_table(results)
     assert "kombinasyon" in table
+    assert "gerceklesen_scale" in table
     assert "k1_matmul_scale8" in table
     assert "k1_matmul_scale11" in table
     assert "RuntimeError: patladi" in table
-    assert "success" in table and "failed" in table
+    assert "success" in table and "failed" in table and "panic" in table
+    assert "12.5" in table

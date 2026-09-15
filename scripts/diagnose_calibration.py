@@ -40,6 +40,21 @@ bu script çalıştırılınca kesinleşir — bu yüzden ADIM 1 hâlâ şema/ş
 değer aralığını GERÇEK verilerle tekrar gözle doğruluyor, körü körüne
 güvenmiyor.
 
+## SONUÇ (Colab, 1. koşum) — bkz. docs/phase_c_calibration.md
+
+1. `method="scales_kwarg"` (calibrate_settings'e `scales=[scale]`) ÇALIŞTI
+   (scale=8, target=resources, `max_abs_error=0.133`, gerçekleşen
+   `logrows=19`). `method="run_args_scale"` (`bench_circuit.py`'nin eski
+   `force_settings_scale` yaklaşımı) HİÇBİR ölçekte tutmadı.
+2. scale=11/13 `calibrate_settings`'te DÜŞTÜ ("[halo2] General synthesis
+   error", "[tensor] significant bit truncation ... try lowering the
+   scale") — DÜŞÜK ölçek çalışıyor, YÜKSEK ölçek düşüyor (beklenenin
+   tersi; muhtemelen `mapping.fc1`'in 512 terimlik iç çarpımı sebep).
+3. scale=16 gerçek bir `pyo3_runtime.PanicException` fırlattı (assertion
+   `left == right` failed: `left: 160, right: 144`) — bu artık `attempt_calibration`/
+   `attempt_skip_calibration`'da `BaseException` olarak yakalanıp
+   `status="panic"` ile işaretleniyor, script düşmüyor.
+
 BİLİNÇLİ TEST SINIRI: ADIM 1c/2/3/4 (gen_settings/calibrate_settings/
 compile_circuit/setup/gen_witness/prove) `ezkl` gerektirir, SADECE
 Colab'da çalışır — bu yüzden `ezkl` modül İÇİNDE (fonksiyon gövdesinde)
@@ -66,7 +81,7 @@ from circuits.ezkl_utils import run_async, run_get_srs
 from circuits.export_mapping import load_reference
 from circuits.rebuild_mapping import VALID_EMBED_MODES
 from configs.loader import load_paths
-from scripts.bench_circuit import build_multi_input_json, write_json_file
+from scripts.bench_circuit import build_multi_input_json, classify_exception_status, write_json_file
 from storage.pathguard import assert_writable
 
 _SCHEMA_FINDINGS_TEXT = """\
@@ -235,10 +250,13 @@ def attempt_calibration(onnx_path: Path, input_json_path: Path, work_dir: Path, 
 
         run_async(ezkl.calibrate_settings, str(input_json_path), str(onnx_path), str(settings_path), target, **calib_kwargs)
         attempt["status"] = "success"
-    except Exception as e:  # noqa: BLE001 - teşhis amaçlı, her deneme ayrı raporlanıp devam ediliyor
-        attempt["error"] = f"{type(e).__name__}: {e}"
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as e:  # noqa: BLE001 - pyo3 PanicException DAHIL, teşhis amaçlı her deneme ayrı raporlanıp devam ediliyor
+        attempt["status"] = classify_exception_status(e)
+        attempt["error"] = f"{type(e).__module__}.{type(e).__name__}: {e}"
         print(
-            f"[diagnose] DENEME BAŞARISIZ (method={method}, target={target}, scale={scale}, "
+            f"[diagnose] DENEME {attempt['status'].upper()} (method={method}, target={target}, scale={scale}, "
             f"max_logrows={max_logrows}): {attempt['error']}",
             flush=True,
         )
@@ -325,9 +343,15 @@ def attempt_skip_calibration(onnx_path: Path, input_json_path: Path, work_dir: P
 
         result["status"] = "success"
         print(f"[diagnose] KALİBRASYONSUZ scale={scale}: TÜM ADIMLAR BAŞARILI ({result['timings']})", flush=True)
-    except Exception as e:  # noqa: BLE001 - teşhis amaçlı, her scale ayrı raporlanıp devam ediliyor
-        result["error"] = f"{type(e).__name__}: {e}"
-        print(f"[diagnose] KALİBRASYONSUZ scale={scale} '{result['last_step']}' adımından SONRA BAŞARISIZ: {result['error']}", flush=True)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as e:  # noqa: BLE001 - pyo3 PanicException DAHIL, teşhis amaçlı her scale ayrı raporlanıp devam ediliyor
+        result["status"] = classify_exception_status(e)
+        result["error"] = f"{type(e).__module__}.{type(e).__name__}: {e}"
+        print(
+            f"[diagnose] KALİBRASYONSUZ scale={scale} '{result['last_step']}' adımından SONRA {result['status'].upper()}: {result['error']}",
+            flush=True,
+        )
         print(traceback.format_exc(), flush=True)
 
     return result
@@ -347,7 +371,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--work-dir", default=None, help="varsayılan: {zk_root}/bench/diagnose")
     parser.add_argument("--k", type=int, default=1)
     parser.add_argument("--embed-mode", default="matmul", choices=list(VALID_EMBED_MODES))
-    parser.add_argument("--scales", default="8,11,13,16")
+    parser.add_argument("--scales", default="6,7,8,9,10")
     parser.add_argument("--targets", default="resources,accuracy")
     parser.add_argument("--max-logrows-values", default="none,15,19,22")
     return parser.parse_args(argv)
