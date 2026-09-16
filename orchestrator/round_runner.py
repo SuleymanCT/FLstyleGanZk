@@ -146,7 +146,10 @@ def generate_and_submit_proof(
         w_abs_max = model(z, c).abs().max().item()
 
     onnx_path = work_dir / f"mapping_round{round_id}_{site}.onnx"
+    t0 = time.perf_counter()
     export_to_onnx(model, z, c, str(onnx_path), opset_version=13)
+    onnx_export_seconds = time.perf_counter() - t0
+    print(f"[round_runner]  onnx_export: {onnx_export_seconds:.2f}s")
 
     input_json_path = work_dir / "input.json"
     write_json_file(build_multi_input_json(z, c), str(input_json_path))
@@ -181,12 +184,23 @@ def generate_and_submit_proof(
 
     verified, submit_gas = round_manager_client.submit_proof(round_id, verifier_address, proof_bytes, public_inputs, private_key)
 
+    timings = {
+        "onnx_export": onnx_export_seconds,
+        **setup_result["timings"],
+        **prove_result["timings"],
+        "solc_compile": solc_compile_seconds,
+    }
+    total_seconds = sum(timings.values())
+    print(f"[round_runner]  === round={round_id} site={site} adım-adım süre dökümü (toplam {total_seconds:.2f}s) ===")
+    for step, seconds in timings.items():
+        print(f"[round_runner]    {step:<20} {seconds:>8.2f}s")
+
     return {
         "verifier_address": verifier_address,
         "deploy_gas": deploy_gas,
         "submit_gas": submit_gas,
         "verified": verified,
-        "timings": {**setup_result["timings"], **prove_result["timings"], "solc_compile": solc_compile_seconds},
+        "timings": timings,
         "circuit_stats": setup_result["circuit_stats"],
         "requested_scale": setup_result["requested_scale"],
         "realized_scale": setup_result["realized_scale"],

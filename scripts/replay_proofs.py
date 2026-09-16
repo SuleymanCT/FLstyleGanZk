@@ -88,7 +88,15 @@ from storage.pathguard import assert_writable
 DEFAULT_ROUNDS = "0-14"
 DEFAULT_SITES = "0-3"
 DEFAULT_TIMEOUT_SECONDS = 1800.0
-EZKL_TIMING_KEYS = ("gen_settings", "calibrate_settings", "compile_circuit", "setup", "gen_witness", "prove", "verify_offchain")
+# NOT: "get_srs" ve "onnx_export" eskiden bu listede YOKTU — total_ezkl_seconds
+# gerçekte ölçülen sürenin BİR KISMINI atlıyordu (Faz E'nin ilk tam-ispat
+# koşumunda 467.5s toplam gözlendi, Faz C3'ün ~75s'lik referansının 6 katı
+# — bkz. docs/phase_e_timing_investigation.md). Adım-adım dökümün TAMAMI
+# artık burada.
+EZKL_TIMING_KEYS = (
+    "onnx_export", "gen_settings", "calibrate_settings", "compile_circuit",
+    "get_srs", "setup", "gen_witness", "prove", "verify_offchain",
+)
 
 
 # ---------------------------------------------------------------------------

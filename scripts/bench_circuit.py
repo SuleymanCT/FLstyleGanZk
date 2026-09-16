@@ -511,11 +511,13 @@ def run_ezkl_pipeline(onnx_path: Path, input_json_path: Path, work_dir: Path, sc
     if ok is not True:
         raise RuntimeError(f"gen_settings True döndürmedi: {ok!r}")
     timings["gen_settings"] = time.perf_counter() - t0
+    print(f"[bench_circuit]  gen_settings: {timings['gen_settings']:.2f}s")
 
     print(f"[bench_circuit]  calibrate_settings (target=resources, scales=[{scale}])...")
     t0 = time.perf_counter()
     run_async(ezkl.calibrate_settings, str(input_json_path), str(onnx_path), str(paths["settings"]), "resources", scales=[scale])
     timings["calibrate_settings"] = time.perf_counter() - t0
+    print(f"[bench_circuit]  calibrate_settings: {timings['calibrate_settings']:.2f}s")
 
     realized_scale = read_realized_scale(str(paths["settings"]))
     print(f"[bench_circuit]  istenen scale={scale} -> gerçekleşen: {realized_scale}")
@@ -528,6 +530,7 @@ def run_ezkl_pipeline(onnx_path: Path, input_json_path: Path, work_dir: Path, sc
     if ok is not True:
         raise RuntimeError(f"compile_circuit True döndürmedi: {ok!r}")
     timings["compile_circuit"] = time.perf_counter() - t0
+    print(f"[bench_circuit]  compile_circuit: {timings['compile_circuit']:.2f}s")
 
     with open(paths["settings"], encoding="utf-8") as f:
         final_settings = json.load(f)
@@ -538,6 +541,7 @@ def run_ezkl_pipeline(onnx_path: Path, input_json_path: Path, work_dir: Path, sc
     t0 = time.perf_counter()
     run_get_srs(str(paths["settings"]))
     timings["get_srs"] = time.perf_counter() - t0
+    print(f"[bench_circuit]  get_srs: {timings['get_srs']:.2f}s")
 
     print("[bench_circuit]  setup (pk/vk üretiliyor)...")
     t0 = time.perf_counter()
@@ -545,6 +549,7 @@ def run_ezkl_pipeline(onnx_path: Path, input_json_path: Path, work_dir: Path, sc
     if ok is not True:
         raise RuntimeError(f"setup True döndürmedi: {ok!r}")
     timings["setup"] = time.perf_counter() - t0
+    print(f"[bench_circuit]  setup: {timings['setup']:.2f}s")
 
     for name, p in paths.items():
         if not p.exists():
@@ -574,6 +579,7 @@ def run_prove_and_verify(input_json_path: Path, ezkl_paths: dict, work_dir: Path
     if not witness_path.exists():
         raise RuntimeError(f"gen_witness sonrası witness dosyası yok: {witness_path}")
     timings["gen_witness"] = time.perf_counter() - t0
+    print(f"[bench_circuit]  gen_witness: {timings['gen_witness']:.2f}s")
 
     print("[bench_circuit]  prove...")
     t0 = time.perf_counter()
@@ -581,11 +587,13 @@ def run_prove_and_verify(input_json_path: Path, ezkl_paths: dict, work_dir: Path
     if not proof_path.exists():
         raise RuntimeError(f"prove sonrası proof dosyası yok: {proof_path}")
     timings["prove"] = time.perf_counter() - t0
+    print(f"[bench_circuit]  prove: {timings['prove']:.2f}s")
 
     print("[bench_circuit]  verify (offchain)...")
     t0 = time.perf_counter()
     verified = bool(run_async(ezkl.verify, str(proof_path), str(ezkl_paths["settings"]), str(ezkl_paths["vk"])))
     timings["verify_offchain"] = time.perf_counter() - t0
+    print(f"[bench_circuit]  verify_offchain: {timings['verify_offchain']:.2f}s")
     if not verified:
         raise RuntimeError("ezkl.verify False döndürdü (offchain doğrulama başarısız).")
 

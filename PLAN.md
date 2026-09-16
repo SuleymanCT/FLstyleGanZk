@@ -878,6 +878,31 @@ logluyor. 8 yeni test (`--worker` ile `--mode`'suz parse çalışıyor mu,
 `validate_args`'ın her iki moddaki zorunluluk/yoksayma davranışı),
 saf, yerelde GERÇEKTEN doğrulandı (265 passed toplam).
 
+**3. Colab koşumu — ilk GERÇEK ispat başarılı ama 6× yavaş:**
+`status=success`, `verified=True`, tepe RAM 6,4 GB, deploy gas 3.281.404,
+verify gas 1.220.225, toplam gas 4.501.629 — AMA `total_ezkl_seconds=467,5`,
+Faz C3'ün AYNI yapılandırma (k=1/matmul/scale=8) için ölçtüğü `~75s`'in
+**6 katı**. Kod incelemesinde NEDENİ bulundu: `EZKL_TIMING_KEYS`
+`"get_srs"`/`"onnx_export"`'u İÇERMİYORDU (toplam bile EKSİKTİ) VE
+hiçbir ezkl adımı BİTİŞ süresini KONSOLA yazdırmıyordu — nerede
+kaybedildiği GÖRÜNEMİYORDU. **Eklenen (henüz optimizasyon DEĞİL, sadece
+ölçüm):** `bench_circuit.py`'nin her ezkl adımı artık kendi süresini
+yazdırıyor; `round_runner.py` artık `onnx_export`'u da ölçüyor ve
+fonksiyon sonunda TÜM adımların (9 adım) tek bir dökümünü basıyor;
+`EZKL_TIMING_KEYS` eksiksiz. Kod okumasıyla ön-değerlendirme —
+`docs/phase_e_timing_investigation.md`'de tam analiz: (a) SRS'in
+yeniden indirilip indirilmediği kaynak koduyla KESİN doğrulanamadı,
+bir sonraki ölçüm netleştirecek; (b) kalibrasyonun her ispatta yeniden
+koşması BEKLENEN bir davranış (`param_visibility="fixed"` — farklı
+ağırlıklar farklı kalibrasyon), süre farkı ölçülecek; (c) ONNX ihracının
+her ispatta zorunlu olduğu (ağırlıklar ONNX'e gömülü) ama muhtemelen
+ihmal edilebilir sürede olduğu değerlendirildi. Paylaşılabilirlik
+tablosu: SRS (devre `logrows`'una bağlı, ağırlıklara DEĞİL) PRENSİPTE
+paylaşılabilir aday; `settings.json`/`compile_circuit`/`setup`/pk-vk
+HİÇBİRİ paylaşılamaz (`param_visibility="fixed"`, Faz D'nin tasarım
+notu). **Optimizasyon BİLEREK uygulanmadı** — kullanıcının isteğiyle
+önce gerçek per-adım verisi bekleniyor.
+
 Çıktı `{zk_root}/replay/replay_results_<mod>.json` + `docs/phase_e_replay.md`
 — HER İKİSİ de script TARAFINDAN üretilir (elle yazılmadı, CLAUDE.md
 madde 6 gereği gerçek veri olmadan rapor uydurulmuyor); `docs/phase_e_replay.md`
