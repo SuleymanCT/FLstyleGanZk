@@ -13,6 +13,7 @@ import pytest
 from scripts.replay_proofs import (
     compute_mode_totals,
     parse_int_range,
+    render_failure_summary,
     render_mode_comparison_table,
     render_staged_distribution,
     replay_combo_key,
@@ -116,3 +117,28 @@ def test_render_staged_distribution_groups_by_round():
 
 def test_render_staged_distribution_skips_entries_without_combo():
     assert render_staged_distribution({"bad": {}}) == "| round | ispat üreten site'lar |\n|---|---|\n"
+
+
+def test_render_failure_summary_all_success_returns_clean_message():
+    results = {"round0_site0": {"status": "success"}}
+    assert render_failure_summary(results) == "Tüm kombinasyonlar başarılı — başarısızlık yok.\n"
+
+
+def test_render_failure_summary_lists_failures_with_error_text():
+    results = {
+        "round0_site0": {"status": "success"},
+        "round1_site2": {"status": "failed", "error_summary": "RuntimeError: kaboom"},
+        "round2_site1": {"status": "crashed", "error": "returncode=-9"},
+    }
+    summary = render_failure_summary(results)
+    assert "round0_site0" not in summary
+    assert "round1_site2" in summary and "RuntimeError: kaboom" in summary
+    assert "round2_site1" in summary and "returncode=-9" in summary
+
+
+def test_render_failure_summary_escapes_pipes_and_newlines_in_error_text():
+    results = {"round0_site0": {"status": "failed", "error_summary": "line1|with|pipes\nline2"}}
+    summary = render_failure_summary(results)
+    # tablo satırı bozulmamalı - '|' kaçırılmış, '\n' boşlukla değiştirilmiş olmalı
+    assert summary.count("\n") == 3  # baslik + ayrac + tek veri satiri + son newline
+    assert "line1\\|with\\|pipes line2" in summary

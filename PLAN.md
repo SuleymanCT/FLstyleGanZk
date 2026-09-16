@@ -834,10 +834,31 @@ ara dosyalar (pk, derlenmiş devre, witness) her ispattan sonra siliniyor,
 `--only-first`/`--limit N` ile küçük ölçekte önce denenebiliyor.
 
 Saf yardımcılar (`parse_int_range`, `replay_combo_key`, `compute_mode_totals`,
-`render_mode_comparison_table`, `render_staged_distribution`) 13 testle
-yerelde GERÇEKTEN doğrulandı (254 passed, 2 skipped toplam). ezkl/anvil/
-solc/gerçek shard gerektiren kısımlar (`run_worker`, `main`'in chain
-dalı) BİLİNÇLİ TEST SINIRI içinde — sadece Colab'da doğrulanabilir.
+`render_mode_comparison_table`, `render_staged_distribution`,
+`render_failure_summary`) 16 testle yerelde GERÇEKTEN doğrulandı (257
+passed, 2 skipped toplam). ezkl/anvil/solc/gerçek shard gerektiren
+kısımlar (`run_worker`, `main`'in chain dalı) BİLİNÇLİ TEST SINIRI
+içinde — sadece Colab'da doğrulanabilir.
+
+**1. Colab koşumu — altyapı çalıştı (RoundManager deploy gas=1.537.371,
+startRound gas=122.029, challenge seed üretildi) ama işçi süreç
+`status=failed`, `tepe_RAM_KB=None` döndü VE HATA MESAJI HİÇ BASILMADI.**
+İki kök sebep: (1) `main()`'in per-kombinasyon özet satırı `error_summary`'yi
+HİÇ YAZDIRMIYORDU (`bench_circuit.py`'nin aksine) — eklendi. (2) İşçinin
+kendi `result.json`'u HİÇ YAZILMAMIŞTI, yani işçi `try/except/finally`
+bloğunun (importlar ve `work_dir.mkdir()` dahil, eskiden bunlar `try`'ın
+DIŞINDAYDI) dışında bir yerde tamamen çökmüştü — ebeveyn bunu "Worker
+süreci sonuç dosyası yazmadan sonlandı" diye biliyordu ama BUNU DA hiç
+yazdırmıyordu. **Düzeltme:** `run_worker` artık HİÇBİR kod yolu try/except
+dışında bırakmıyor (importlar dahil), `finally` içindeki `cleanup_work_dir`/
+`write_json_file` çağrıları da KENDİ try/except'leriyle korunuyor (biri
+başarısız olursa sonuç KAYBOLMUYOR, en azından STDOUT'a basılıyor);
+`result.json` hiç yoksa ebeveyn artık ayrı bir `"crashed"` durumu +
+`returncode` + son 50 satır stdout kaydediyor; işçinin TAM çıktısı
+başarısızlıkta KOŞULSUZ, başarıda `--verbose` ile gösteriliyor; başarısız
+kombinasyon için komut TEKRAR (kopyala-yapıştır için) yazdırılıyor;
+kapanış raporuna (`render_failure_summary`) tüm başarısız/çöken
+kombinasyonların hata özeti eklendi.
 
 Çıktı `{zk_root}/replay/replay_results_<mod>.json` + `docs/phase_e_replay.md`
 — HER İKİSİ de script TARAFINDAN üretilir (elle yazılmadı, CLAUDE.md

@@ -194,6 +194,23 @@ def render_staged_distribution(results: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+def render_failure_summary(results: dict) -> str:
+    """Başarısız/çöken TÜM kombinasyonları hata özetiyle birlikte listeler
+    — Faz E'nin ilk koşumunda "hata mesajı hiç basılmadı" sorununun
+    kapanış raporunda da tekrarlanmaması için (konsola VE markdown'a
+    yazılır)."""
+    failures = {key: r for key, r in results.items() if r.get("status") != "success"}
+    if not failures:
+        return "Tüm kombinasyonlar başarılı — başarısızlık yok.\n"
+
+    lines = ["| kombinasyon | durum | hata özeti |", "|---|---|---|"]
+    for key, r in failures.items():
+        error = r.get("error_summary") or r.get("error") or "-"
+        error = str(error).replace("|", "\\|").replace("\n", " ")[:300]
+        lines.append(f"| {key} | {r.get('status', '?')} | {error} |")
+    return "\n".join(lines) + "\n"
+
+
 # ---------------------------------------------------------------------------
 # ezkl/anvil/solc/web3'e bağımlı adımlar (BİLİNÇLİ TEST SINIRI — sadece Colab)
 # ---------------------------------------------------------------------------
@@ -202,21 +219,30 @@ def render_staged_distribution(results: dict) -> str:
 def run_worker(args: argparse.Namespace) -> int:
     """TEK bir (round,site) ispatını uçtan uca çalıştırır. Ebeveyn süreç
     bunu `--worker` bayrağıyla bir alt süreç olarak başlatır (bkz. modül
-    docstring'i — izolasyon gerekçeleri)."""
-    from chain.client import RoundManagerClient
-    from circuits.export_mapping import load_shard
-    from orchestrator.challenge import build_challenge_z_c
-    from orchestrator.round_runner import generate_and_submit_proof, load_circuit_config
+    docstring'i — izolasyon gerekçeleri).
 
+    EN DIŞ SEVİYEDE `try/except BaseException` kullanır (importlar DAHİL,
+    `work_dir.mkdir()` DAHİL) — Faz E'nin ilk Colab koşumunda bir işçi
+    süreç `result.json` HİÇ YAZMADAN, HİÇBİR HATA MESAJI OLMADAN
+    başarısız oldu; kök sebep muhtemelen bu fonksiyonun eskiden `try`
+    bloğunun DIŞINDA duran importları/`work_dir` kurulumuydu — oradaki
+    bir hata hiçbir yerde yakalanmıyordu. Artık HİÇBİR KOD YOLU bu
+    fonksiyonun try/except/finally'sinin dışında kalmıyor."""
     combo = {"round_id": args.round_id, "site_index": args.site_index}
     key = replay_combo_key(args.round_id, args.site_index)
-    work_dir = Path(args.work_dir)
-    work_dir.mkdir(parents=True, exist_ok=True)
-
-    result: dict = {"combo": combo, "status": "failed", "error_summary": None}
+    result: dict = {"combo": combo, "status": "failed", "error_summary": None, "error": None, "traceback": None}
     t_start = time.perf_counter()
+    work_dir: Path | None = None
 
     try:
+        from chain.client import RoundManagerClient
+        from circuits.export_mapping import load_shard
+        from orchestrator.challenge import build_challenge_z_c
+        from orchestrator.round_runner import generate_and_submit_proof, load_circuit_config
+
+        work_dir = Path(args.work_dir)
+        work_dir.mkdir(parents=True, exist_ok=True)
+
         circuit_config = load_circuit_config(args.circuit_config)
         shard = load_shard(args.shards_dir, args.round_id, args.site_index)
 
@@ -247,16 +273,27 @@ def run_worker(args: argparse.Namespace) -> int:
         raise
     except BaseException as e:  # noqa: BLE001 - pyo3 PanicException DAHIL tüm hatalar burada yakalanıp raporlanıyor, koşu düşmüyor
         result["status"] = classify_exception_status(e)
-        result["error_summary"] = f"{type(e).__module__}.{type(e).__name__}: {e}"
-        print(f"[replay_proofs] KOMBİNASYON {result['status'].upper()} ({key}): {result['error_summary']}")
-        print(traceback.format_exc())
+        error_text = f"{type(e).__module__}.{type(e).__name__}: {e}"
+        result["error_summary"] = error_text
+        result["error"] = error_text
+        result["traceback"] = traceback.format_exc()
+        print(f"[replay_proofs] KOMBİNASYON {result['status'].upper()} ({key}): {error_text}", flush=True)
+        print(result["traceback"], flush=True)
 
     finally:
         result["total_wall_seconds"] = time.perf_counter() - t_start
         result["peak_rss_kb"] = measure_peak_rss_kb()
-        result.update(cleanup_work_dir(work_dir, keep_artifacts=args.keep_artifacts))
-        write_json_file(result, args.result_out)
-        print(f"[replay_proofs] Sonuç yazıldı: {args.result_out}")
+        if work_dir is not None:
+            try:
+                result.update(cleanup_work_dir(work_dir, keep_artifacts=args.keep_artifacts))
+            except Exception as cleanup_error:  # noqa: BLE001 - temizlik başarısızlığı sonucu KAYBETMEMELİ
+                print(f"[replay_proofs] UYARI: cleanup_work_dir başarısız: {cleanup_error}", flush=True)
+        try:
+            write_json_file(result, args.result_out)
+            print(f"[replay_proofs] Sonuç yazıldı: {args.result_out}", flush=True)
+        except Exception as write_error:  # noqa: BLE001 - son çare: en azından STDOUT'ta görünsün (ebeveyn stdout'u yakalıyor)
+            print(f"[replay_proofs] KRİTİK: result.json YAZILAMADI ({write_error}). Ham sonuç:", flush=True)
+            print(repr(result), flush=True)
         gc.collect()
 
     return 0 if result["status"] == "success" else 1
@@ -277,6 +314,7 @@ def run_combo_in_subprocess(
     replay_dir: Path,
     timeout: float,
     keep_artifacts: bool,
+    verbose: bool = False,
 ) -> dict:
     key = replay_combo_key(round_id, site_index)
     combo_work_dir = work_root / key
@@ -328,10 +366,16 @@ def run_combo_in_subprocess(
         with open(result_path, encoding="utf-8") as f:
             result = json.load(f)
     else:
+        # İşçi süreç result.json YAZMADAN sonlandı — Faz E'nin ilk Colab
+        # koşumunda gerçekten yaşandı, HİÇ hata mesajı görünmüyordu. Artık
+        # ayrı bir durum ("crashed") + returncode + son 50 satır loglanıyor,
+        # ve aşağıdaki verbose/hata bloğu bu durumda da TAM çıktıyı basıyor.
+        tail_lines = (stdout or "").splitlines()[-50:]
         result = {
             "combo": {"round_id": round_id, "site_index": site_index},
-            "status": "failed",
-            "error_summary": "Worker süreci sonuç dosyası yazmadan sonlandı (çökme/timeout-kill).",
+            "status": "crashed",
+            "error_summary": f"Worker süreci result.json yazmadan sonlandı (returncode={proc.returncode}).",
+            "stdout_tail": tail_lines,
             "timings": {},
             "peak_rss_kb": None,
         }
@@ -340,7 +384,7 @@ def run_combo_in_subprocess(
         result["status"] = "failed"
         result["error_summary"] = f"{result.get('error_summary') or ''} [TIMEOUT: {timeout}s aşıldı]".strip()
 
-    result["returncode"] = proc.returncode
+    result.setdefault("returncode", proc.returncode)
     result["decomposition_warning_count"] = count_decomposition_warnings(stdout or "")
     result["log_path"] = str(log_path)
 
@@ -356,6 +400,22 @@ def run_combo_in_subprocess(
             result["max_abs_error_relative_pct"] = 100.0 * max_abs_error / w_abs_max
         else:
             result["max_abs_error_relative_pct"] = None
+
+    # 1) işçinin TAM çıktısını her zaman göster: başarısızsa KOŞULSUZ,
+    #    başarılıysa sadece --verbose ile (bench_circuit.py'de bu hiç
+    #    yoktu, Faz E'nin ilk koşumunda "hata mesajı hiç basılmadı"
+    #    şikayetinin kök sebebiydi).
+    if verbose or result["status"] != "success":
+        print(f"\n--- '{key}' işçi süreç TAM çıktısı ({log_path}) ---")
+        print(stdout or "(çıktı yok)")
+        print(f"--- '{key}' çıktı sonu ---")
+
+    # 5) başarısızlıkta komutu TEKRAR göster (elle yeniden koşturmak için
+    #    kopyala-yapıştır) — ilk yazdırma yukarıda, koşumdan ÖNCE oldu,
+    #    uzun bir çıktının arasında kaybolmuş olabilir.
+    if result["status"] != "success":
+        print(f"[replay_proofs] '{key}' BAŞARISIZ (durum={result['status']}). Elle yeniden koşturmak için:")
+        print(f"  {' '.join(cmd)}")
 
     return result
 
@@ -378,6 +438,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--timeout", type=float, default=DEFAULT_TIMEOUT_SECONDS, help="ispat başına saniye")
     parser.add_argument("--force", action="store_true", help="zaten sonuçlandırılmış kombinasyonları yeniden çalıştır")
     parser.add_argument("--keep-artifacts", action="store_true")
+    parser.add_argument("--verbose", action="store_true", help="başarılı kombinasyonların işçi çıktısını da göster (başarısız olanlar zaten HER ZAMAN gösterilir)")
     parser.add_argument("--markdown-out", default="docs/phase_e_replay.md")
     # Aşağıdakiler SADECE alt süreç (--worker) tarafından kullanılır.
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
@@ -511,6 +572,7 @@ def main(argv=None) -> int:
                         rpc_url=anvil.rpc_url, round_manager_address=round_manager_address, abi_file=abi_file,
                         private_key=site_key, shards_dir=shards_dir, circuit_config_path=args.circuit_config,
                         work_root=work_root, replay_dir=replay_dir, timeout=args.timeout, keep_artifacts=args.keep_artifacts,
+                        verbose=args.verbose,
                     )
                     if result.get("verified"):
                         reputations[site_index] = round_manager_client.get_reputation(site_address)
@@ -522,6 +584,8 @@ def main(argv=None) -> int:
                     f"[replay_proofs] '{key}' bitti: durum={result['status']} "
                     f"tepe_RAM_KB={result.get('peak_rss_kb')} verified={result.get('verified')}"
                 )
+                if result["status"] != "success":
+                    print(f"[replay_proofs]   hata: {result.get('error_summary') or result.get('error')}")
                 gc.collect()
 
     print(f"\n=== Faz E ({args.mode}) sonuçları ===")
@@ -545,6 +609,11 @@ def main(argv=None) -> int:
     if "staged" in totals_by_mode:
         staged_results = all_results if args.mode == "staged" else load_replay_results(str(replay_dir / "replay_results_staged.json"))
         md_parts += ["\n## \"staged\" modda round başına ispat dağılımı\n\n", render_staged_distribution(staged_results)]
+
+    failure_summary = render_failure_summary(all_results)
+    print(f"\n=== '{args.mode}' modunda başarısız/çöken kombinasyonlar ===")
+    print(failure_summary)
+    md_parts += [f"\n## \"{args.mode}\" modunda başarısız/çöken kombinasyonlar\n\n", failure_summary]
 
     md_path = args.markdown_out
     assert_writable(md_path)
