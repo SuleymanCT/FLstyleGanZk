@@ -430,7 +430,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--shards-dir", default=None, help="varsayılan: {shards_dir} (configs/paths.yaml)")
     parser.add_argument("--replay-dir", default=None, help="varsayılan: {zk_root}/replay (Drive) — SADECE küçük sonuç dosyaları")
     parser.add_argument("--work-root", default=None, help="varsayılan: /content/zk_bench_work (yerel disk) — BÜYÜK ara dosyalar")
-    parser.add_argument("--mode", required=True, choices=["full", "staged"])
+    parser.add_argument("--mode", default=None, choices=["full", "staged"])
     parser.add_argument("--rounds", default=DEFAULT_ROUNDS)
     parser.add_argument("--sites", default=DEFAULT_SITES)
     parser.add_argument("--only-first", action="store_true", help="sadece ilk kombinasyonu koş")
@@ -454,8 +454,48 @@ def parse_args(argv=None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+# Sadece `--worker` alt sürecinin GERÇEKTEN kullandığı, ebeveyn modda
+# hiçbir anlamı olmayan alanlar (`--shards-dir`/`--circuit-config`/
+# `--keep-artifacts` HARİÇ — bunlar HER İKİ modda da kullanılıyor).
+WORKER_ONLY_ARG_NAMES = (
+    "round_id", "site_index", "challenge_seed_hex", "rpc_url",
+    "round_manager_address", "round_manager_abi_file", "private_key",
+    "work_dir", "result_out",
+)
+
+
+def _flag_name(attr_name: str) -> str:
+    return "--" + attr_name.replace("_", "-")
+
+
+def validate_args(args: argparse.Namespace) -> None:
+    """`parse_args()` `--mode`'u DA, işçiye özgü alanları DA `required=True`
+    YAPMAZ — çünkü ebeveyn ve işçi (`--worker`) modlarının ZORUNLU alan
+    kümeleri FARKLI ve argparse TEK bir zorunlu-alan kümesi kabul ediyor.
+    Faz E'nin ilk Colab koşumunda `--mode` argparse seviyesinde
+    `required=True` OLDUĞU için ebeveynin başlattığı `--worker` çağrısı
+    (`--mode` GÖNDERMİYOR, worker onu hiç kullanmıyor) doğrudan
+    `argparse.error` ile patlıyordu. Bu fonksiyon HER MOD için doğru
+    zorunlulukları, argparse'tan SONRA, çalışma zamanında denetler —
+    `main()` bunu `run_worker`/ebeveyn dallarına ayrılmadan HEMEN ÖNCE
+    çağırır."""
+    if args.worker:
+        missing = [_flag_name(name) for name in WORKER_ONLY_ARG_NAMES if getattr(args, name) is None]
+        if missing:
+            raise ValueError(f"--worker ile şunlar da ZORUNLU: {missing}")
+        return
+
+    if args.mode is None:
+        raise ValueError("--mode ZORUNLU (ebeveyn modda) — 'full' ya da 'staged' seç.")
+
+    ignored = [_flag_name(name) for name in WORKER_ONLY_ARG_NAMES if getattr(args, name, None) is not None]
+    if ignored:
+        print(f"[replay_proofs] NOT: {ignored} sadece --worker modunda anlamlı, ebeveyn modda YOKSAYILIYOR.")
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
+    validate_args(args)
 
     if args.worker:
         return run_worker(args)

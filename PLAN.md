@@ -835,10 +835,10 @@ ara dosyalar (pk, derlenmiş devre, witness) her ispattan sonra siliniyor,
 
 Saf yardımcılar (`parse_int_range`, `replay_combo_key`, `compute_mode_totals`,
 `render_mode_comparison_table`, `render_staged_distribution`,
-`render_failure_summary`) 16 testle yerelde GERÇEKTEN doğrulandı (257
-passed, 2 skipped toplam). ezkl/anvil/solc/gerçek shard gerektiren
-kısımlar (`run_worker`, `main`'in chain dalı) BİLİNÇLİ TEST SINIRI
-içinde — sadece Colab'da doğrulanabilir.
+`render_failure_summary`, `validate_args`) 24 testle yerelde GERÇEKTEN
+doğrulandı (265 passed, 2 skipped toplam). ezkl/anvil/solc/gerçek shard
+gerektiren kısımlar (`run_worker`, `main`'in chain dalı) BİLİNÇLİ TEST
+SINIRI içinde — sadece Colab'da doğrulanabilir.
 
 **1. Colab koşumu — altyapı çalıştı (RoundManager deploy gas=1.537.371,
 startRound gas=122.029, challenge seed üretildi) ama işçi süreç
@@ -859,6 +859,24 @@ başarısızlıkta KOŞULSUZ, başarıda `--verbose` ile gösteriliyor; başarı
 kombinasyon için komut TEKRAR (kopyala-yapıştır için) yazdırılıyor;
 kapanış raporuna (`render_failure_summary`) tüm başarısız/çöken
 kombinasyonların hata özeti eklendi.
+
+**2. Colab koşumu — hata görünürlüğü işe yaradı, GERÇEK hata ortaya
+çıktı:** `replay_proofs.py: error: the following arguments are required:
+--mode`. Ebeveynin başlattığı `--worker` alt süreç komutu `--mode`
+GÖNDERMİYORDU (worker onu hiç kullanmıyor) ama `--mode` argparse
+seviyesinde `required=True` idi — ebeveyn ve işçi modlarının FARKLI
+zorunlu alan kümeleri olduğundan, TEK bir argparse zorunluluk kümesi
+ikisini de KARŞILAYAMADI. **Düzeltme:** `--mode` (ve zaten `SUPPRESS`
+olan 9 işçiye-özgü alan) artık argparse seviyesinde `required=True`
+DEĞİL — yeni `validate_args(args)` fonksiyonu `parse_args()`'tan SONRA,
+`main()`'in ilk işi olarak, HER MOD için doğru zorunlulukları çalışma
+zamanında denetliyor: `--worker` modunda 9 işçi alanının HEPSİ eksikse
+net bir `ValueError` (hangileri eksik listeler), ebeveyn modda `--mode`
+eksikse ayrı bir `ValueError`, ebeveyn modda işçiye-özgü bir alan
+(yanlışlıkla) verilmişse hata VERMİYOR ama "YOKSAYILIYOR" diye
+logluyor. 8 yeni test (`--worker` ile `--mode`'suz parse çalışıyor mu,
+`validate_args`'ın her iki moddaki zorunluluk/yoksayma davranışı),
+saf, yerelde GERÇEKTEN doğrulandı (265 passed toplam).
 
 Çıktı `{zk_root}/replay/replay_results_<mod>.json` + `docs/phase_e_replay.md`
 — HER İKİSİ de script TARAFINDAN üretilir (elle yazılmadı, CLAUDE.md

@@ -12,12 +12,27 @@ import pytest
 
 from scripts.replay_proofs import (
     compute_mode_totals,
+    parse_args,
     parse_int_range,
     render_failure_summary,
     render_mode_comparison_table,
     render_staged_distribution,
     replay_combo_key,
+    validate_args,
 )
+
+_WORKER_ARGV = [
+    "--worker",
+    "--round-id", "0",
+    "--site-index", "0",
+    "--challenge-seed-hex", "ab",
+    "--rpc-url", "http://127.0.0.1:8545",
+    "--round-manager-address", "0xabc",
+    "--round-manager-abi-file", "abi.json",
+    "--private-key", "deadbeef",
+    "--work-dir", "wd",
+    "--result-out", "out.json",
+]
 
 
 def test_parse_int_range_simple_range():
@@ -142,3 +157,55 @@ def test_render_failure_summary_escapes_pipes_and_newlines_in_error_text():
     # tablo satırı bozulmamalı - '|' kaçırılmış, '\n' boşlukla değiştirilmiş olmalı
     assert summary.count("\n") == 3  # baslik + ayrac + tek veri satiri + son newline
     assert "line1\\|with\\|pipes line2" in summary
+
+
+def test_parse_args_worker_mode_does_not_require_mode():
+    # Faz E'nin ilk Colab koşumunda tam BURADA patladı: --worker
+    # çağrısı --mode göndermiyordu, argparse required=True yüzünden
+    # "the following arguments are required: --mode" ile duruyordu.
+    args = parse_args(_WORKER_ARGV)
+    assert args.worker is True
+    assert args.mode is None
+    assert args.round_id == 0
+    assert args.site_index == 0
+
+
+def test_parse_args_parent_mode_mode_defaults_to_none_at_argparse_level():
+    # required=True KALDIRILDI - argparse artık --mode eksikse HATA
+    # VERMİYOR, zorunluluk validate_args'a taşındı (aşağıdaki testler).
+    args = parse_args([])
+    assert args.worker is False
+    assert args.mode is None
+
+
+def test_validate_args_passes_for_complete_worker_invocation():
+    validate_args(parse_args(_WORKER_ARGV))  # raise etmemeli
+
+
+def test_validate_args_raises_when_worker_missing_required_fields():
+    with pytest.raises(ValueError, match="--worker ile şunlar da ZORUNLU"):
+        validate_args(parse_args(["--worker"]))
+
+
+def test_validate_args_lists_all_missing_worker_fields():
+    with pytest.raises(ValueError) as exc_info:
+        validate_args(parse_args(["--worker", "--round-id", "0"]))
+    assert "--site-index" in str(exc_info.value)
+    assert "--rpc-url" in str(exc_info.value)
+    assert "--round-id" not in str(exc_info.value)  # bu VERİLDİ, eksik listesinde OLMAMALI
+
+
+def test_validate_args_raises_when_mode_missing_in_parent_mode():
+    with pytest.raises(ValueError, match="--mode ZORUNLU"):
+        validate_args(parse_args([]))
+
+
+def test_validate_args_passes_with_mode_in_parent_mode():
+    validate_args(parse_args(["--mode", "full"]))  # raise etmemeli
+
+
+def test_validate_args_logs_ignored_worker_args_in_parent_mode(capsys):
+    validate_args(parse_args(["--mode", "full", "--round-id", "3"]))
+    out = capsys.readouterr().out
+    assert "--round-id" in out
+    assert "YOKSAYILIYOR" in out
