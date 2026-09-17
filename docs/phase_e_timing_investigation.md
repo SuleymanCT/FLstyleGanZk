@@ -1,12 +1,46 @@
-# Faz E Zaman Araştırması — 6× Yavaşlık Neden Var? (Henüz Optimize Edilmedi)
+# Faz E Zaman Araştırması — 6× Yavaşlık Neden Var?
 
-**Durum: sadece ÖLÇÜM altyapısı eklendi, optimizasyon YAPILMADI —
-bilerek.** Bu doküman, Faz E'nin ilk gerçek ispatının (durum=success,
+**Durum: ÇÖZÜLDÜ (Colab'da doğrulandı) — optimize edilecek bir şey
+YOK.** Bu doküman, Faz E'nin ilk gerçek ispatının (durum=success,
 verified=True, tepe RAM 6,4 GB, deploy gas 3.281.404, verify gas
 1.220.225, toplam gas 4.501.629) `total_ezkl_seconds=467,5` ölçmesinin
 (Faz C3'ün AYNI yapılandırma — k=1, matmul, scale=8 — için ölçtüğü
-`setup 37,3s + prove 37,4s ≈ 75s`'in **~6 katı**) NEDEN olabileceğini
-araştırıyor. 60 ispatlık tam koşu bu hızla ~8 saate çıkar.
+`setup 37,3s + prove 37,4s ≈ 75s`'in **~6 katı**) NEDEN olduğunu
+araştırdı.
+
+## SONUÇ (Colab'da adım-adım ölçümle doğrulandı)
+
+Aşağıdaki bölümlerdeki instrümantasyon eklendikten sonra alınan GERÇEK
+bir ispatın adım-adım dökümü:
+
+```
+onnx_export        0.12s
+gen_settings        0.50s
+calibrate           1.83s
+compile_circuit     0.06s
+get_srs             0.42s
+setup              36.48s
+gen_witness         0.54s
+prove              37.35s
+verify_offchain     0.24s
+```
+
+**`get_srs` önbellekten geliyor (0.42s)** — madde 3(a)'daki "yeniden mi
+indiriliyor" sorusu KESİN olarak yanıtlandı: HAYIR, önbellekleme
+ÇALIŞIYOR. İlk koşudaki `467,5s` anomalisi, o TEK koşumda SRS'in İLK
+KEZ indirilmesiydi (bir defalık maliyet) — sonraki tüm ispatlar
+önbellekten okuyor. **Gerçek, tekrarlayan maliyet `setup + prove ≈ 74s`**
+— Faz C3'ün referans ölçümüyle (`~75s`) TAM UYUMLU. **Optimize edilecek
+bir şey yok**: kalibrasyon (1,83s) ve ONNX ihracı (0,12s) zaten ihmal
+edilebilir düzeyde, tahmin edildiği gibi (madde 3b/3c). 60 ispatlık tam
+koşunun gerçek toplam ezkl maliyeti ~74s × 60 ≈ 74 dakika (SRS'in tek
+seferlik ilk indirme maliyeti hariç) — 8 saatlik ilk tahmin YANLIŞTI,
+o tahmin 467,5s'lik ANOMALİYİ (bir kerelik SRS indirmesi) normal
+davranış sanmaktan kaynaklanıyordu.
+
+**Faz E'nin gerçek darboğazı ezkl DEĞİL, anvil'in bellek birikimiydi**
+— 36 ispat sonrası anvil RPC'ye yanıt vermez oldu (`ReadTimeout`). Bu
+AYRI bir altyapı sorunu, `docs/phase_e_infra_notes.md`'de ele alınıyor.
 
 ## 1. Kök sebep bulunamadı — çünkü adım-adım kırılım YOKTU
 
@@ -99,19 +133,18 @@ ayrıca ölçülmemişti çünkü zaten hızlı olduğu varsayılıyordu) — ma
 | `setup` çıktısı (pk/vk) | **HAYIR, KESİNLİKLE** — Faz D'nin tasarım notu: `param_visibility="fixed"` ağırlıkları devrenin SABİT sütunlarına gömüyor, pk/vk BU SABİT DEĞERLERE göre üretiliyor | Bu yüzden zaten her (round,site) KENDİ Verifier'ını deploy ediyor |
 | Verifier deploy/solc derleme | HAYIR — `setup`'a bağlı (yukarısı) | Aynı sebep |
 
-**Sonuç (henüz UYGULANMADI):** eğer `get_srs` gerçekten darboğazsa,
-TEK bir paylaşılan `srs_path` (per-ispat `work_dir` yerine `work_root`'ta,
-temizlik tarafından SİLİNMEYECEK bir konumda) tüm 60 ispat için makul
-bir optimizasyon adayı. Diğer HİÇBİR ezkl adımı (kalibrasyon, compile,
-setup) `param_visibility="fixed"` yüzünden paylaşılamaz — bu Faz D'nin
-zaten belgelediği maliyetin (`docs/phase_d_report.md`) doğal bir
-sonucu. Bu optimizasyon, per-adım ölçümün GERÇEK verisi gelmeden
-UYGULANMAYACAK (kullanıcının açık isteği).
+**SONUÇ (Colab ölçümüyle KAPANDI):** `get_srs` DEĞİL darboğaz — zaten
+önbellekten geliyor (0,42s, madde "SONUÇ" bölümü). Bu tablonun tek pratik
+sonucu: sistemin GERÇEK, tekrarlayan maliyeti `setup + prove ≈ 74s`'dir
+ve bu, `param_visibility="fixed"` (Faz D'nin tasarım notu) yüzünden
+HİÇBİR şekilde paylaşılamaz/hızlandırılamaz — bu devre mimarisinin
+DOĞAL, kabul edilmesi gereken maliyetidir. **Hiçbir optimizasyon
+uygulanmadı, uygulanmasına gerek YOK.**
 
 ## Sıradaki adım
 
-Aynı ispatı (ya da birkaç tanesini) bu instrümantasyonla yeniden koştur
-— konsoldaki `=== round=R site=S adım-adım süre dökümü ===` bloğu ve
-`replay_results_<mod>.json`'un `timings` alanı hangi adımın 6 katı
-büyüdüğünü kesin olarak gösterecek. O veri geldikten SONRA hedefli bir
-optimizasyon (muhtemelen paylaşılan SRS) değerlendirilecek.
+Zaman araştırması KAPANDI. Faz E'nin gerçek darboğazı anvil'in bellek
+birikimiydi (60 ispatlık tam koşuda 36. ispattan sonra RPC yanıt
+vermez oldu) — bu AYRI bir altyapı sorunu olarak `docs/phase_e_infra_notes.md`'de
+ele alınıp segment-tabanlı bir anvil yeniden başlatma mimarisiyle
+çözüldü (henüz Colab'da doğrulanmadı).

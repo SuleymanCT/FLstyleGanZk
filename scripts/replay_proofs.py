@@ -98,6 +98,15 @@ EZKL_TIMING_KEYS = (
     "get_srs", "setup", "gen_witness", "prove", "verify_offchain",
 )
 
+# scripts/replay_proofs.py'ye ÖZGÜ anvil ömür-döngüsü varsayılanları —
+# configs/schedule.yaml: replay_infra ile override edilebilir (bkz.
+# get_replay_infra_config). Faz E'nin gerçek Colab koşumunda anvil 36
+# ispat sonrası yanıt vermez oldu (RPC ReadTimeout) — bkz.
+# docs/phase_e_replay.md "Altyapı kısıtları" bölümü.
+DEFAULT_ANVIL_RESTART_INTERVAL = 10
+DEFAULT_RPC_TIMEOUT_SECONDS = 120.0
+DEFAULT_HEALTH_CHECK_TIMEOUT_SECONDS = 5.0
+
 
 # ---------------------------------------------------------------------------
 # Saf/testable yardımcılar (ezkl/anvil/solc/web3 GEREKTİRMEZ)
@@ -217,6 +226,79 @@ def render_failure_summary(results: dict) -> str:
         error = str(error).replace("|", "\\|").replace("\n", " ")[:300]
         lines.append(f"| {key} | {r.get('status', '?')} | {error} |")
     return "\n".join(lines) + "\n"
+
+
+def render_infra_events(events: list) -> str:
+    """Anvil'in yeniden başlatıldığı/sağlıksız bulunduğu HER olayı
+    listeler — "kesinti/yeniden başlatma sayısı" raporda bir "altyapı
+    kısıtı" olarak AÇIKÇA görünsün diye (kullanıcının açık isteği,
+    gizlenmez)."""
+    if not events:
+        return "Hiç yeniden başlatma/sağlık kontrolü olayı olmadı — anvil tüm koşum boyunca TEK bir segmentte kaldı.\n"
+
+    lines = [f"Toplam {len(events)} altyapı olayı (yeniden başlatma/sağlık kontrolü):", "", "| segment | tür | bağlam |", "|---|---|---|"]
+    for event in events:
+        event = dict(event)
+        segment_index = event.pop("segment_index", "?")
+        event_type = event.pop("type", "?")
+        context = ", ".join(f"{k}={v}" for k, v in event.items())
+        lines.append(f"| {segment_index} | {event_type} | {context} |")
+    return "\n".join(lines) + "\n"
+
+
+def get_replay_infra_config(schedule_config: dict) -> dict:
+    """`configs/schedule.yaml: replay_infra` bölümünü okur — YOKSA (eski
+    bir schedule.yaml, ya da sadece round_runner.py'nin kullandığı bir
+    kopya) sessizce varsayılanlara düşer, hata VERMEZ (bu bölüm SADECE
+    replay_proofs.py'ye özgü, protokolün gerektirdiği bir alan değil)."""
+    infra = schedule_config.get("replay_infra") or {}
+    return {
+        "anvil_restart_interval": infra.get("anvil_restart_interval", DEFAULT_ANVIL_RESTART_INTERVAL),
+        "rpc_timeout_seconds": infra.get("rpc_timeout_seconds", DEFAULT_RPC_TIMEOUT_SECONDS),
+        "health_check_timeout_seconds": infra.get("health_check_timeout_seconds", DEFAULT_HEALTH_CHECK_TIMEOUT_SECONDS),
+    }
+
+
+def should_restart_segment(proofs_in_segment: int, restart_interval: int) -> bool:
+    """`restart_interval <= 0` -> asla planlı yeniden başlatma yapma
+    (0/negatif = devre dışı bırakma anahtarı)."""
+    return restart_interval > 0 and proofs_in_segment >= restart_interval
+
+
+def round_fully_done(round_id: int, sites: list, all_results: dict, force: bool) -> bool:
+    """Bir round'un TÜM site'ları için zaten sonuç varsa `startRound`
+    çağrısını bile ATLAMAK üzere kullanılır (resume sırasında gereksiz
+    gas/zaman harcamamak için) — "full" modda anlamlı bir kısayol;
+    "staged" modda bazı round'larda hiç ispat gerekmeyebileceğinden
+    (ör. tüm site'lar örneklemede elenmiş olabilir) bu fonksiyon
+    genellikle `False` döner ve normal akış (kendi içinde zaten doğru
+    şekilde ATLAMA yapan per-site kontrolü) devam eder — YANLIŞ bir
+    atlamaya yol AÇMAZ, sadece bir hızlandırma fırsatını KAÇIRABİLİR."""
+    if force:
+        return False
+    return all(replay_combo_key(round_id, s) in all_results for s in sites)
+
+
+def check_rpc_alive(rpc_url: str, timeout: float = DEFAULT_HEALTH_CHECK_TIMEOUT_SECONDS) -> bool:
+    """`eth_blockNumber` ile anvil'in GERÇEKTEN yanıt verip vermediğini
+    KISA bir zaman aşımıyla kontrol eder — asıl RPC işlem zaman aşımından
+    (`rpc_timeout_seconds`, dakikalar sürebilir) BİLEREK AYRI: amaç HIZLI
+    bir "hayatta mı" sorgusu, uzun uzun beklemek DEĞİL. `requests`'i
+    (web3.py'nin de kullandığı HTTP kütüphanesi) DOĞRUDAN kullanır —
+    `Web3Client` kurmak (kendi `is_connected()` kontrolüyle) BİZİM
+    `timeout`'umuzu değil web3.py'nin varsayılanını kullanabilirdi."""
+    import requests
+
+    try:
+        response = requests.post(
+            rpc_url,
+            json={"jsonrpc": "2.0", "method": "eth_blockNumber", "params": [], "id": 1},
+            timeout=timeout,
+        )
+        response.raise_for_status()
+        return "result" in response.json()
+    except Exception:  # noqa: BLE001 - "canlı değil" sinyali, hangi hata olduğu önemli değil
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -518,6 +600,7 @@ def main(argv=None) -> int:
     paths = load_paths(env=args.env, config_path=args.paths_config)
     schedule_config = load_schedule_config(args.schedule_config)
     circuit_config = load_circuit_config(args.circuit_config)
+    infra = get_replay_infra_config(schedule_config)
 
     shards_dir = args.shards_dir or paths["shards_dir"]
     replay_dir = Path(args.replay_dir or os.path.join(paths["zk_root"], "replay"))
@@ -533,6 +616,11 @@ def main(argv=None) -> int:
     print(f"[replay_proofs] replay_dir={replay_dir} (KÜÇÜK sonuç dosyaları — Drive)")
     print(f"[replay_proofs] work_root={work_root} (BÜYÜK ara dosyalar — yerel disk)")
     print(f"[replay_proofs] timeout={args.timeout}s limit={args.limit} force={args.force} keep_artifacts={args.keep_artifacts}")
+    print(
+        f"[replay_proofs] anvil_restart_interval={infra['anvil_restart_interval']} "
+        f"rpc_timeout={infra['rpc_timeout_seconds']}s health_check_timeout={infra['health_check_timeout_seconds']}s "
+        f"(bkz. configs/schedule.yaml: replay_infra)"
+    )
 
     assert_writable(str(replay_dir))
     replay_dir.mkdir(parents=True, exist_ok=True)
@@ -544,16 +632,20 @@ def main(argv=None) -> int:
 
     reputations = {s: schedule_config["reputation_initial"] for s in sites}
     processed = 0
+    infra_events: list = []  # her yeniden başlatma/sağlık-kontrolü olayının GERÇEK kaydı - raporda GİZLENMEZ
 
-    print("[replay_proofs] anvil başlatılıyor (TEK süreç, tüm koşum boyunca canlı kalacak)...")
-    with AnvilProcess() as anvil:
+    def open_segment(segment_index: int) -> dict:
+        print(f"\n[replay_proofs] === Segment {segment_index}: yeni anvil başlatılıyor ===")
+        anvil = AnvilProcess()
+        anvil.__enter__()
         if len(anvil.accounts) < len(sites) + 1:
+            anvil.__exit__(None, None, None)
             raise RuntimeError(f"anvil yeterli hesap üretmedi: {len(anvil.accounts)} hesap, {len(sites) + 1} gerekli.")
         owner_address, owner_key = anvil.accounts[0]
         site_accounts = {s: anvil.accounts[i + 1] for i, s in enumerate(sites)}
 
-        deploy_client = Web3Client(anvil.rpc_url)
-        print(f"[replay_proofs] '{args.round_manager_sol}' derleniyor...")
+        deploy_client = Web3Client(anvil.rpc_url, timeout=infra["rpc_timeout_seconds"])
+        print(f"[replay_proofs] Segment {segment_index}: '{args.round_manager_sol}' derleniyor...")
         compiled_rm = compile_with_fallback_strategies(Path(args.round_manager_sol))
         proof_schedule = schedule_config["proof_schedule"]
         round_manager_address, deploy_rm_gas = deploy_client.deploy_contract(
@@ -562,24 +654,91 @@ def main(argv=None) -> int:
             (schedule_config["reputation_initial"], schedule_config["reputation_penalty"], schedule_config["reputation_bonus"], proof_schedule["reputation_threshold"]),
             owner_key,
         )
-        print(f"[replay_proofs] RoundManager deploy edildi: {round_manager_address} (gas={deploy_rm_gas})")
+        print(f"[replay_proofs] Segment {segment_index}: RoundManager deploy edildi: {round_manager_address} (gas={deploy_rm_gas})")
 
-        round_manager_client = RoundManagerClient(anvil.rpc_url, round_manager_address, compiled_rm["abi"])
+        round_manager_client = RoundManagerClient(anvil.rpc_url, round_manager_address, compiled_rm["abi"], timeout=infra["rpc_timeout_seconds"])
         for s in sites:
             round_manager_client.register_site(site_accounts[s][0], owner_key)
-
-        abi_file = work_root / "round_manager_abi.json"
+        print(
+            f"[replay_proofs] Segment {segment_index}: {len(sites)} site kaydedildi — İTİBARLAR SIFIRLANDI "
+            f"(yeni kontrat, hepsi reputation_initial={schedule_config['reputation_initial']}'dan başlıyor). "
+            f"'full' modda etkisi yok (itibar hiç kullanılmıyor); 'staged' modda takvim kararı ('must_prove') "
+            f"hâlâ bu script'in YEREL `reputations` sözlüğüne dayanıyor (zincir-tarafı sıfırlanmasından bağımsız "
+            f"olarak devam ediyor) — ama zincirdeki GERÇEK `isSiteEligible`/`reputation` değeri artık bu segmentin "
+            f"başlangıcından itibaren yeniden sayılıyor. Bu, raporda 'altyapı kısıtı' olarak NOT DÜŞÜLÜYOR."
+        )
+        abi_file = work_root / f"round_manager_abi_segment{segment_index}.json"
         write_json_file(compiled_rm["abi"], str(abi_file))
 
+        return {
+            "segment_index": segment_index,
+            "anvil": anvil,
+            "owner_key": owner_key,
+            "site_accounts": site_accounts,
+            "round_manager_client": round_manager_client,
+            "round_manager_address": round_manager_address,
+            "abi_file": abi_file,
+        }
+
+    def close_segment(segment: dict) -> None:
+        segment["anvil"].__exit__(None, None, None)
+
+    segment = open_segment(0)
+    proofs_in_segment = 0
+
+    def restart_segment(reason: str, **context) -> None:
+        nonlocal segment, proofs_in_segment
+        infra_events.append({"type": reason, "segment_index": segment["segment_index"], **context})
+        print(f"[replay_proofs] ANVİL YENİDEN BAŞLATILIYOR (sebep={reason}, bağlam={context}).")
+        close_segment(segment)
+        segment = open_segment(segment["segment_index"] + 1)
+        proofs_in_segment = 0
+
+    try:
         for round_id in rounds:
             if args.limit is not None and processed >= args.limit:
                 print(f"[replay_proofs] --limit {args.limit} doldu, durduruluyor.")
                 break
 
-            challenge_seed, start_gas = round_manager_client.start_round(
-                round_id, f"replay-round-{round_id}", (round_id).to_bytes(32, "big"), owner_key
-            )
-            print(f"[replay_proofs] round={round_id} startRound: gas={start_gas} challenge_seed={challenge_seed.hex()}")
+            if round_fully_done(round_id, sites, all_results, args.force):
+                print(f"[replay_proofs] round={round_id} zaten TAMAMEN sonuçlandırılmış — startRound bile atlanıyor.")
+                continue
+
+            if should_restart_segment(proofs_in_segment, infra["anvil_restart_interval"]):
+                restart_segment("scheduled_restart", before_round=round_id, proofs_in_segment=proofs_in_segment)
+
+            # Round başlatmadan önce sağlık kontrolü + gerekirse yeniden başlatıp bir kez daha dene.
+            # Ana döngüde anvil hatası artık ÖLÜMCÜL DEĞİL: iki deneme de başarısız olursa bu round'un
+            # TÜM site'ları "failed" işaretlenip bir SONRAKİ round'a geçiliyor, koşu düşmüyor.
+            challenge_seed = None
+            for attempt in range(2):
+                if not check_rpc_alive(segment["anvil"].rpc_url, timeout=infra["health_check_timeout_seconds"]):
+                    restart_segment("unhealthy_before_round", round_id=round_id, attempt=attempt)
+                try:
+                    challenge_seed, start_gas = segment["round_manager_client"].start_round(
+                        round_id, f"replay-round-{round_id}", (round_id).to_bytes(32, "big"), segment["owner_key"]
+                    )
+                    break
+                except Exception as e:  # noqa: BLE001 - bir deneme daha yapılacak, ölümcül DEĞİL
+                    print(f"[replay_proofs] round={round_id} startRound BAŞARISIZ (deneme {attempt + 1}/2): {type(e).__name__}: {e}")
+                    restart_segment("start_round_failed", round_id=round_id, attempt=attempt, error=f"{type(e).__name__}: {e}")
+
+            if challenge_seed is None:
+                print(f"[replay_proofs] round={round_id}: startRound İKİ denemede de başarısız — TÜM site'lar 'failed' işaretlenip sonraki round'a geçiliyor.")
+                for site_index in sites:
+                    key = replay_combo_key(round_id, site_index)
+                    if key in all_results and not args.force:
+                        continue
+                    all_results[key] = {
+                        "combo": {"round_id": round_id, "site_index": site_index},
+                        "status": "failed",
+                        "error_summary": "startRound iki denemede de başarısız oldu (anvil altyapı sorunu) — bu round'daki hiçbir site ispatlanamadı.",
+                        "segment_index": segment["segment_index"],
+                    }
+                save_replay_results(all_results, results_path)
+                continue
+
+            print(f"[replay_proofs] round={round_id} startRound: gas={start_gas} challenge_seed={challenge_seed.hex()} segment={segment['segment_index']}")
 
             if args.mode == "full":
                 sites_to_prove = list(sites)
@@ -599,14 +758,39 @@ def main(argv=None) -> int:
                     print(f"[replay_proofs] '{key}' zaten sonuçlandırılmış, atlanıyor (--force ile yeniden çalıştır).")
                     continue
 
-                site_address, site_key = site_accounts[site_index]
+                # Her ispattan ÖNCE hızlı sağlık kontrolü. Anvil ölmüşse yeniden başlatılıyor —
+                # bu round'un ÖNCEKİ site'ları farklı bir challenge_seed ile ispatlanmış olabilir
+                # (yeni segment yeni bir startRound gerektirir); bu bilinen bir tutarsızlık, infra_events'e
+                # kaydedilip raporda AÇIKÇA belirtiliyor (gizlenmiyor).
+                if not check_rpc_alive(segment["anvil"].rpc_url, timeout=infra["health_check_timeout_seconds"]):
+                    restart_segment("unhealthy_before_proof", round_id=round_id, site_index=site_index)
+                    try:
+                        challenge_seed, _start_gas = segment["round_manager_client"].start_round(
+                            round_id, f"replay-round-{round_id}-resumed", (round_id).to_bytes(32, "big"), segment["owner_key"]
+                        )
+                        print(
+                            f"[replay_proofs] round={round_id} YENİ segment {segment['segment_index']} için startRound "
+                            f"TEKRAR çağrıldı — YENİ challenge_seed={challenge_seed.hex()} (bu round'un daha önce "
+                            f"işlenmiş site'larından FARKLI olabilir, bkz. infra_events)."
+                        )
+                    except Exception as e:  # noqa: BLE001 - bu site için başarısız işaretlenip devam ediliyor
+                        all_results[key] = {
+                            "combo": {"round_id": round_id, "site_index": site_index},
+                            "status": "failed",
+                            "error_summary": f"anvil yeniden başlatma sonrası startRound (resume) başarısız: {type(e).__name__}: {e}",
+                            "segment_index": segment["segment_index"],
+                        }
+                        save_replay_results(all_results, results_path)
+                        continue
+
+                site_address, site_key = segment["site_accounts"][site_index]
 
                 try:
                     shard = load_shard(shards_dir, round_id, site_index)
                     weight_commitment = compute_weight_commitment(shard)
                     del shard
                     gc.collect()
-                    round_manager_client.submit_update(round_id, f"replay-update-{round_id}-{site_index}", weight_commitment, site_key)
+                    segment["round_manager_client"].submit_update(round_id, f"replay-update-{round_id}-{site_index}", weight_commitment, site_key)
                 except Exception as e:  # noqa: BLE001 - bu (round,site) başarısız işaretlenip devam ediliyor
                     result = {
                         "combo": {"round_id": round_id, "site_index": site_index},
@@ -617,24 +801,32 @@ def main(argv=None) -> int:
                 else:
                     result = run_combo_in_subprocess(
                         round_id, site_index, challenge_seed,
-                        rpc_url=anvil.rpc_url, round_manager_address=round_manager_address, abi_file=abi_file,
+                        rpc_url=segment["anvil"].rpc_url, round_manager_address=segment["round_manager_address"], abi_file=segment["abi_file"],
                         private_key=site_key, shards_dir=shards_dir, circuit_config_path=args.circuit_config,
                         work_root=work_root, replay_dir=replay_dir, timeout=args.timeout, keep_artifacts=args.keep_artifacts,
                         verbose=args.verbose,
                     )
+                    proofs_in_segment += 1
                     if result.get("verified"):
-                        reputations[site_index] = round_manager_client.get_reputation(site_address)
+                        reputations[site_index] = segment["round_manager_client"].get_reputation(site_address)
 
+                result["segment_index"] = segment["segment_index"]
                 all_results[key] = result
                 save_replay_results(all_results, results_path)
                 processed += 1
                 print(
-                    f"[replay_proofs] '{key}' bitti: durum={result['status']} "
+                    f"[replay_proofs] '{key}' bitti: durum={result['status']} segment={segment['segment_index']} "
                     f"tepe_RAM_KB={result.get('peak_rss_kb')} verified={result.get('verified')}"
                 )
                 if result["status"] != "success":
                     print(f"[replay_proofs]   hata: {result.get('error_summary') or result.get('error')}")
                 gc.collect()
+    finally:
+        close_segment(segment)
+
+    print(f"\n[replay_proofs] Altyapı olayları (yeniden başlatma/sağlık kontrolü) — {len(infra_events)} olay:")
+    for event in infra_events:
+        print(f"  {event}")
 
     print(f"\n=== Faz E ({args.mode}) sonuçları ===")
     totals = compute_mode_totals(all_results)
@@ -662,6 +854,19 @@ def main(argv=None) -> int:
     print(f"\n=== '{args.mode}' modunda başarısız/çöken kombinasyonlar ===")
     print(failure_summary)
     md_parts += [f"\n## \"{args.mode}\" modunda başarısız/çöken kombinasyonlar\n\n", failure_summary]
+
+    # infra_events BİLEREK all_results'ın İÇİNE konmuyor (compute_mode_totals/
+    # render_failure_summary/round_fully_done onu bir "kombinasyon" sanıp
+    # patlardı) — ayrı, küçük bir dosyaya yazılıyor. "Kesinti ve yeniden
+    # başlatma sayısı" raporda GİZLENMEZ (kullanıcının açık isteği).
+    infra_summary = render_infra_events(infra_events)
+    print(f"\n=== '{args.mode}' modunda altyapı olayları (yeniden başlatma/sağlık kontrolü) ===")
+    print(infra_summary)
+    md_parts += [f"\n## \"{args.mode}\" modunda altyapı olayları (yeniden başlatma/sağlık kontrolü)\n\n", infra_summary]
+
+    infra_events_path = str(replay_dir / f"replay_infra_events_{args.mode}.json")
+    write_json_file({"infra_events": infra_events, "restart_count": len(infra_events)}, infra_events_path)
+    print(f"[replay_proofs] Yazıldı: {infra_events_path}")
 
     md_path = args.markdown_out
     assert_writable(md_path)

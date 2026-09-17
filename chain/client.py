@@ -84,10 +84,17 @@ def _raw_transaction_bytes(signed_tx) -> bytes:
     return raw
 
 
+DEFAULT_RPC_TIMEOUT_SECONDS = 120.0
+
+
 class Web3Client:
-    def __init__(self, rpc_url: str):
+    def __init__(self, rpc_url: str, timeout: float = DEFAULT_RPC_TIMEOUT_SECONDS):
+        """`timeout`: HTTP RPC istek zaman aşımı. Eski varsayılan (web3.py'nin
+        kendi öntanımlısı, 30s) Faz E'nin gerçek Colab koşumunda anvil
+        birçok ispat biriktirip yavaşlayınca `requests.exceptions.ReadTimeout`
+        ile patladı — varsayılan burada 120s'ye çıkarıldı."""
         self.rpc_url = rpc_url
-        self.w3 = Web3(Web3.HTTPProvider(rpc_url))
+        self.w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": timeout}))
         if not self.w3.is_connected():
             raise RuntimeError(f"[Web3Client] '{rpc_url}'ye bağlanılamadı.")
 
@@ -173,8 +180,8 @@ class RoundManagerClient(Web3Client):
     da düşmemek için (web3.py aslında ikisini de kabul eder, ama erken/net
     doğrulama için bilerek kullanılıyor)."""
 
-    def __init__(self, rpc_url: str, address: str, abi: list):
-        super().__init__(rpc_url)
+    def __init__(self, rpc_url: str, address: str, abi: list, timeout: float = DEFAULT_RPC_TIMEOUT_SECONDS):
+        super().__init__(rpc_url, timeout=timeout)
         self.address = Web3.to_checksum_address(address)
         self.contract = self.w3.eth.contract(address=self.address, abi=abi)
 

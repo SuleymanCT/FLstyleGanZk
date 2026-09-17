@@ -903,6 +903,55 @@ HİÇBİRİ paylaşılamaz (`param_visibility="fixed"`, Faz D'nin tasarım
 notu). **Optimizasyon BİLEREK uygulanmadı** — kullanıcının isteğiyle
 önce gerçek per-adım verisi bekleniyor.
 
+**4. Colab koşumu — zaman araştırması KAPANDI, YENİ bir altyapı sorunu
+bulundu:** 60 ispatlık `full` mod koşusunda round 0-8 arası **36 ispat
+GEÇTİ** (`verified=True`), round 9'da `requests.exceptions.ReadTimeout`
+(anvil RPC yanıt vermez oldu) — ana döngü çöktü. Adım-adım kırılım
+GELDİ ve zaman araştırmasını KAPATTI: `setup 36,48s + prove 37,35s ≈ 74s`
+(Faz C3'ün referansıyla TAM uyumlu), `get_srs` ÖNBELLEKTEN geliyor
+(0,42s) — ilk koşudaki 467,5s anomalisi SRS'in bir kerelik İLK
+indirmesiydi. **ezkl tarafında optimize edilecek bir şey YOK** (bkz.
+`docs/phase_e_timing_investigation.md`, "SONUÇ" bölümü). Gerçek darboğaz
+anvil'in bellek birikimiydi (36 ispat × verifier deploy + calldata,
+Colab'da her ispat zaten ~7GB tepe RAM yapıyor). **Düzeltmeler**
+(`docs/phase_e_infra_notes.md`'de tam analiz):
+- **Segment mimarisi**: `configs/schedule.yaml: replay_infra.anvil_restart_interval`
+  (varsayılan 10) kadar ispat biriktiğinde, bir sonraki round'dan ÖNCE
+  anvil TAMAMEN yeniden başlatılıp `RoundManager` YENİDEN deploy
+  ediliyor, site'lar YENİDEN kaydediliyor (itibarlar SIFIRLANIYOR —
+  "full" modda etkisi yok, "staged" modda takvim kararı script'in YEREL
+  `reputations` sözlüğüne dayandığından etkilenmiyor, ama zincir-tarafı
+  `reputation`/`isSiteEligible` segment başına sıfırlanıyor — bu
+  AÇIKÇA loglanıp raporda not düşülüyor).
+- Her round/ispat ÖNCESİ `check_rpc_alive` (`eth_blockNumber`, kısa
+  zaman aşımı) sağlık kontrolü — sağlıksızsa segment yeniden başlatılıp
+  (gerekirse `startRound` o round için TEKRAR çağrılıp YENİ bir
+  `challengeSeed` alınarak) devam ediliyor.
+- `startRound` iki denemede de başarısız olursa o round'un TÜM
+  site'ları `"failed"` işaretlenip SONRAKİ round'a geçiliyor — ana
+  döngü artık anvil hatasıyla ÖLMÜYOR.
+- `round_fully_done`: bir round'un TÜM site'ları zaten sonuçlanmışsa
+  `startRound` bile atlanıyor (resume'da gereksiz gas harcamamak için).
+- `anvil --prune-history` (varsayılan 100 durum, `chain/anvil.py`) —
+  İKİNCİL önlem, TEK BAŞINA yeterli olmayabileceği biliniyor
+  (foundry-rs/foundry#6017), bu yüzden segment mimarisi BİRİNCİL savunma.
+- `chain/client.py: Web3Client`/`RoundManagerClient` RPC timeout'u
+  30s→120s (`DEFAULT_RPC_TIMEOUT_SECONDS`, `configs/schedule.yaml:
+  replay_infra.rpc_timeout_seconds`'tan okunuyor) — gözlenen hatanın
+  literal kaynağı buydu.
+- Sonuç JSON'una `"segment_index"` (her ispat) + ayrı
+  `{zk_root}/replay/replay_infra_events_<mod>.json` (TÜM yeniden
+  başlatma/sağlık-kontrolü olayları + `restart_count`) eklendi —
+  `docs/phase_e_replay.md`'nin yeni bir "altyapı olayları" bölümünde
+  AÇIKÇA gösteriliyor, gizlenmiyor.
+
+13 yeni saf test (`should_restart_segment`, `round_fully_done`,
+`get_replay_infra_config`, `check_rpc_alive` — GERÇEK ama erişilemeyen
+bir port'a karşı, mock DEĞİL — `render_infra_events`) yerelde GERÇEKTEN
+doğrulandı (278 passed, 2 skipped toplam). Segment açma/kapama, gerçek
+anvil restart'ı BİLİNÇLİ TEST SINIRI içinde — sadece Colab'da, gerçek
+bir 60 ispatlık koşumla doğrulanabilir; henüz doğrulanmadı.
+
 Çıktı `{zk_root}/replay/replay_results_<mod>.json` + `docs/phase_e_replay.md`
 — HER İKİSİ de script TARAFINDAN üretilir (elle yazılmadı, CLAUDE.md
 madde 6 gereği gerçek veri olmadan rapor uydurulmuyor); `docs/phase_e_replay.md`

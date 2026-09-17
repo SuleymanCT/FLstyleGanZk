@@ -52,3 +52,29 @@ reputation_bonus: 1
 # seçildi ki normal eğitimde clipping devreye girmesin, ama ölçekli
 # zehirleme saldırıları yakalansın.
 tau_norm_threshold: 3000.0
+
+# replay_infra: SADECE scripts/replay_proofs.py'nin anvil ömür-döngüsü
+# yönetimi için — protokolün KENDİSİYLE (reputation/schedule) ilgisi
+# yok. Faz E'nin gerçek Colab koşumunda anvil 36 ispat sonrası (her biri
+# kendi verifier deploy'u + ispat calldata'sı biriktiriyor) RPC
+# isteklerine yanıt vermez oldu (`ReadTimeout`, 30s varsayılan timeout).
+replay_infra:
+  # anvil_restart_interval: kaç GERÇEKLEŞEN ispattan sonra anvil TAMAMEN
+  # yeniden başlatılıp RoundManager yeniden deploy edilsin. 10 seçildi:
+  # 36 ispatta sorun çıktığından, sınırı çok daha erken (3-4x marj) koyup
+  # anvil'in ASLA bu kadar şişmesine izin vermemek. `--prune-history` tek
+  # başına yeterli OLMAYABİLİR (foundry-rs/foundry#6017) — bu yüzden
+  # düzenli TAM yeniden başlatma birincil savunma.
+  anvil_restart_interval: 10
+  # rpc_timeout_seconds: web3.py'nin HTTP RPC istek zaman aşımı. Eski
+  # varsayılan (web3.py'nin kendisi, 30s) tam gözlenen hatanın kaynağıydı
+  # ("Read timed out. (read timeout=30.0)") — anvil ağırlaştıkça bazı
+  # RPC çağrıları (özellikle ispat calldata'sı biriktikçe) 30s'yi
+  # aşabiliyor. 120s'ye çıkarıldı (chain/client.py: DEFAULT_RPC_TIMEOUT_SECONDS
+  # ile de tutarlı — o TÜM Web3Client kullanıcıları için varsayılan oldu).
+  rpc_timeout_seconds: 120.0
+  # health_check_timeout_seconds: her round/ispat öncesi yapılan basit
+  # `eth_blockNumber` sağlık kontrolünün zaman aşımı — rpc_timeout_seconds'tan
+  # BİLEREK KISA (asıl amaç "yanıt veriyor mu" diye HIZLI bakmak, cevap
+  # gelene kadar uzun uzun beklemek DEĞİL).
+  health_check_timeout_seconds: 5.0

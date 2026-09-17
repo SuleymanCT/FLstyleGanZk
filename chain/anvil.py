@@ -60,12 +60,28 @@ def normalize_private_key_hex(private_key: str) -> str:
     return stripped
 
 
+DEFAULT_PRUNE_HISTORY_STATES = 100
+
+
 class AnvilProcess:
     """`with AnvilProcess() as anvil: ...` — anvil'i başlatır, hazır olana
-    kadar bekler, çıkışta güvenle kapatır."""
+    kadar bekler, çıkışta güvenle kapatır.
 
-    def __init__(self, ready_timeout: float = 30.0):
+    `prune_history`: Foundry'nin `--prune-history [N]` bayrağı — "en fazla
+    N durum bellekte tutulur" (belgelenmiş: `foundry.sh/anvil/reference`).
+    Faz E'nin gerçek Colab koşumunda anvil, ~36 ispat biriktikten sonra
+    (her biri kendi verifier deploy'u + ispat calldata'sı) RPC istekleri
+    zaman aşımına uğrayacak kadar şişip yanıt vermez oldu — bu birikmeyi
+    SINIRLAMAK için varsayılan olarak AÇIK (100 durum). `None` verilirse
+    eski davranışa (sınırsız geçmiş) dönülür. Bilinen sınır: bazı uzun
+    koşumlarda bu bayrak bile bellek büyümesini TAMAMEN durdurmuyor
+    (foundry-rs/foundry#6017/#3478) — bu yüzden `scripts/replay_proofs.py`
+    AYRICA periyodik olarak anvil'i TAMAMEN yeniden başlatıyor (bkz. o
+    modülün 'segment' mimarisi)."""
+
+    def __init__(self, ready_timeout: float = 30.0, prune_history: int | None = DEFAULT_PRUNE_HISTORY_STATES):
         self.ready_timeout = ready_timeout
+        self.prune_history = prune_history
         self.port: int | None = None
         self.proc: subprocess.Popen | None = None
         self.accounts: list[tuple[str, str]] = []
@@ -79,9 +95,12 @@ class AnvilProcess:
 
     def __enter__(self) -> "AnvilProcess":
         self.port = find_free_port()
-        print(f"[anvil] Başlatılıyor: port={self.port}")
+        cmd = ["anvil", "--port", str(self.port)]
+        if self.prune_history is not None:
+            cmd += ["--prune-history", str(self.prune_history)]
+        print(f"[anvil] Başlatılıyor: port={self.port} prune_history={self.prune_history}")
         self.proc = subprocess.Popen(
-            ["anvil", "--port", str(self.port)],
+            cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,

@@ -11,13 +11,18 @@ dallarında, çağrıldıklarında), bu yüzden bu dosya yerelde sorunsuz
 import pytest
 
 from scripts.replay_proofs import (
+    check_rpc_alive,
     compute_mode_totals,
+    get_replay_infra_config,
     parse_args,
     parse_int_range,
     render_failure_summary,
+    render_infra_events,
     render_mode_comparison_table,
     render_staged_distribution,
     replay_combo_key,
+    round_fully_done,
+    should_restart_segment,
     validate_args,
 )
 
@@ -209,3 +214,81 @@ def test_validate_args_logs_ignored_worker_args_in_parent_mode(capsys):
     out = capsys.readouterr().out
     assert "--round-id" in out
     assert "YOKSAYILIYOR" in out
+
+
+def test_get_replay_infra_config_reads_real_schedule_file():
+    from orchestrator.schedule import load_schedule_config
+
+    schedule_config = load_schedule_config("configs/schedule.yaml")
+    infra = get_replay_infra_config(schedule_config)
+    assert infra["anvil_restart_interval"] == 10
+    assert infra["rpc_timeout_seconds"] == 120.0
+    assert infra["health_check_timeout_seconds"] == 5.0
+
+
+def test_get_replay_infra_config_falls_back_to_defaults_when_section_missing():
+    infra = get_replay_infra_config({})
+    assert infra["anvil_restart_interval"] == 10
+    assert infra["rpc_timeout_seconds"] == 120.0
+    assert infra["health_check_timeout_seconds"] == 5.0
+
+
+def test_get_replay_infra_config_honors_explicit_overrides():
+    infra = get_replay_infra_config({"replay_infra": {"anvil_restart_interval": 5}})
+    assert infra["anvil_restart_interval"] == 5
+    assert infra["rpc_timeout_seconds"] == 120.0  # override edilmeyen alan varsayılanda kalır
+
+
+def test_should_restart_segment_true_when_threshold_reached():
+    assert should_restart_segment(10, 10) is True
+    assert should_restart_segment(11, 10) is True
+
+
+def test_should_restart_segment_false_when_below_threshold():
+    assert should_restart_segment(9, 10) is False
+
+
+def test_should_restart_segment_disabled_when_interval_non_positive():
+    assert should_restart_segment(1000, 0) is False
+    assert should_restart_segment(1000, -1) is False
+
+
+def test_round_fully_done_true_when_all_sites_present():
+    all_results = {"round0_site0": {}, "round0_site1": {}, "round0_site2": {}, "round0_site3": {}}
+    assert round_fully_done(0, [0, 1, 2, 3], all_results, force=False) is True
+
+
+def test_round_fully_done_false_when_some_sites_missing():
+    all_results = {"round0_site0": {}}
+    assert round_fully_done(0, [0, 1, 2, 3], all_results, force=False) is False
+
+
+def test_round_fully_done_false_when_force_true_even_if_all_present():
+    all_results = {"round0_site0": {}, "round0_site1": {}, "round0_site2": {}, "round0_site3": {}}
+    assert round_fully_done(0, [0, 1, 2, 3], all_results, force=True) is False
+
+
+def test_check_rpc_alive_false_for_unreachable_port():
+    # GERCEK bir ag cagrisi - hicbir sey dinlemeyen bir port'a - hizli
+    # basarisiz olmali (baglanti reddi), False donmeli. Mock DEGIL.
+    assert check_rpc_alive("http://127.0.0.1:1", timeout=2.0) is False
+
+
+def test_check_rpc_alive_false_for_malformed_url():
+    assert check_rpc_alive("not-a-url", timeout=2.0) is False
+
+
+def test_render_infra_events_empty_reports_no_restarts():
+    summary = render_infra_events([])
+    assert "Hiç yeniden başlatma" in summary
+
+
+def test_render_infra_events_lists_all_events_with_context():
+    events = [
+        {"type": "scheduled_restart", "segment_index": 0, "before_round": 3, "proofs_in_segment": 10},
+        {"type": "unhealthy_before_proof", "segment_index": 1, "round_id": 9, "site_index": 2},
+    ]
+    summary = render_infra_events(events)
+    assert "Toplam 2 altyapı olayı" in summary
+    assert "scheduled_restart" in summary and "before_round=3" in summary
+    assert "unhealthy_before_proof" in summary and "round_id=9" in summary and "site_index=2" in summary
