@@ -952,6 +952,38 @@ doğrulandı (278 passed, 2 skipped toplam). Segment açma/kapama, gerçek
 anvil restart'ı BİLİNÇLİ TEST SINIRI içinde — sadece Colab'da, gerçek
 bir 60 ispatlık koşumla doğrulanabilir; henüz doğrulanmadı.
 
+**5. Colab koşumu — "staged" mod round 0'ı geçti (sabit round, 4 site de
+`verified=True`), round 1'de çöktü:** `orchestrator/schedule.py:
+deterministic_unit_interval`de `AttributeError: 'int' object has no
+attribute 'lower'`. Kök sebep: fonksiyon `site`'ın DAİMA bir `str`
+(Ethereum adresi) olduğunu varsayıp `site.lower()` çağırıyordu, ama
+`replay_proofs.py: build_round_schedule`'a `site`'ı anvil hesap
+İNDEKSİ (`int`, 0-3) olarak geçiriyor. **Tasarım kararı — İKİ farklı
+site kimliği temsilini TEK bir konvansiyona ZORLAMADIM:**
+`orchestrator/round_runner.py`'nin canlı/üretim akışında site'ların
+kanonik bir indeksi YOK, sadece kayıtlı cüzdan adresleri var (`str`
+doğal); `replay_proofs.py`'nin replay akışında ise site kimliği zaten
+anvil'in deterministik hesap indeksi (`int` doğal). İkisini ortak bir
+temsile zorlamak birini yapay/yanlış bir veri modeline sokardı — bunun
+yerine `deterministic_unit_interval`'ın kendisi `str(site).lower()` ile
+tip-esnek yapıldı: `site=2` (int) ile `site="2"` (str) HER ZAMAN aynı
+sonucu üretir, adresler için büyük/küçük harf farkı da elenir. Yanlış
+tipte artık sessizce çökmüyor. `must_prove`/`build_round_schedule`'ın
+tip belirtimleri de (`site: str` → tipsiz `site`, `sites: list[str]` →
+`sites: list`) buna göre güncellendi. 3 yeni determinizm testi
+(`tests/test_schedule.py`: int site çökmeden çalışıyor mu, int/str aynı
+sonucu veriyor mu, aynı (seed,round,site) üçlüsü her zaman aynı değeri
+veriyor mu — 5 tekrar) eklendi, yerelde GERÇEKTEN doğrulandı (281
+passed, 2 skipped toplam, `tests/test_schedule.py`: 16/16).
+**Madde 4 (round 0'ın zaten kaydedilmiş ispatlarının resume'da
+atlanması) — kod incelemesiyle doğrulandı, DEĞİŞİKLİK GEREKMEDİ:**
+`replay_proofs.py`'nin ana döngüsü `round_fully_done` kontrolünü (bir
+round'un TÜM site'ları zaten `all_results`'ta varsa `startRound`'u BİLE
+atlar) HER şeyden önce çalıştırıyor (satır ~703); site-bazlı
+`if key in all_results and not args.force: continue` kontrolü de (satır
+~730, ~757) herhangi bir chain/ezkl işleminden ÖNCE geliyor — round 0
+tamamen kayıtlıysa döngü onu görmeden geçiyor.
+
 Çıktı `{zk_root}/replay/replay_results_<mod>.json` + `docs/phase_e_replay.md`
 — HER İKİSİ de script TARAFINDAN üretilir (elle yazılmadı, CLAUDE.md
 madde 6 gereği gerçek veri olmadan rapor uydurulmuyor); `docs/phase_e_replay.md`

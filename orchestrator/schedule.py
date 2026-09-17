@@ -28,23 +28,43 @@ def load_schedule_config(config_path: str = "configs/schedule.yaml") -> dict:
     return data
 
 
-def deterministic_unit_interval(challenge_seed: bytes, round_id: int, site: str) -> float:
+def deterministic_unit_interval(challenge_seed: bytes, round_id: int, site) -> float:
     """`challenge_seed`+`round_id`+`site`'den `[0,1)` aralığında
     deterministik (kripto-rastgele DEĞİL, sadece tekrarlanabilir) bir
     değer üretir — sha256 tabanlı. Gerçek rastgelelik gerekmiyor: zincirdeki
     `challengeSeed` (`blockhash` türevi) zaten öngörülemez, buradaki
     hash sadece o öngörülemezliği (round,site) çiftine deterministik
-    şekilde dağıtıyor."""
+    şekilde dağıtıyor.
+
+    `site`: BİLEREK tip-esnek — bir `str` (GERÇEK bir EVM adresi, ör.
+    `orchestrator/round_runner.py`'nin canlı akışının kullandığı) YA DA
+    bir `int` (basit bir site indeksi, ör. `scripts/replay_proofs.py`'nin
+    anvil hesap indeksleri 0-3) olabilir. İKİ çağıran tarafın FARKLI
+    (ama kendi bağlamında DOĞRU) veri modelleri var: round_runner.py'de
+    site'ların kanonik bir indeksi YOK, sadece kayıtlı cüzdan adresleri
+    var; replay_proofs.py'de ise site kimliği anvil'in deterministik
+    hesap indeksi — ikisini TEK bir temsile ZORLAMAK birini yapay/yanlış
+    bir veri modeline sokardı. Bu yüzden `str(site).lower()` ile HER
+    İKİSİ de TEK bir kanonik string'e indirgeniyor — `site=2` (int) ile
+    `site="2"` (str) HER ZAMAN aynı deterministik değeri üretir
+    (`str(2).lower() == str("2").lower() == "2"`), adresler için de
+    büyük/küçük harf farkı elenir (`"0xABC".lower() == "0xabc"`).
+
+    Faz E'nin gerçek Colab koşumunda `replay_proofs.py` `site`'ı bir
+    `int` olarak geçirdi ama bu fonksiyon SADECE `str` (adres)
+    varsayıyordu — `AttributeError: 'int' object has no attribute
+    'lower'` ile çöktü. Artık YANLIŞ tipte sessizce çökmüyor."""
     if not isinstance(challenge_seed, (bytes, bytearray)):
         raise TypeError(f"challenge_seed bytes/bytearray olmalı, alınan: {type(challenge_seed)}")
-    payload = bytes(challenge_seed) + str(round_id).encode("utf-8") + site.lower().encode("utf-8")
+    site_key = str(site).lower()
+    payload = bytes(challenge_seed) + str(round_id).encode("utf-8") + site_key.encode("utf-8")
     digest = hashlib.sha256(payload).digest()
     return int.from_bytes(digest[:8], byteorder="big") / 2**64
 
 
 def must_prove(
     round_id: int,
-    site: str,
+    site,
     *,
     challenge_seed: bytes,
     reputation: int,
@@ -59,6 +79,9 @@ def must_prove(
       1. `round_id` `fixed_rounds` içindeyse -> True (round genelinde ZORUNLU).
       2. `reputation < reputation_threshold` -> True (güvenilmez site HER ZAMAN izlenir).
       3. Aksi halde `deterministic_unit_interval(...) < random_ratio` -> True.
+
+    `site`: `str` (adres) ya da `int` (indeks) olabilir — bkz.
+    `deterministic_unit_interval`'ın docstring'i (tip-esneklik gerekçesi).
     """
     if mode == "full":
         return True
@@ -76,7 +99,7 @@ def must_prove(
 
 def build_round_schedule(
     round_id: int,
-    sites: list[str],
+    sites: list,
     *,
     challenge_seed: bytes,
     reputations: dict,

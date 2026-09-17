@@ -43,6 +43,27 @@ def test_deterministic_unit_interval_varies_by_site():
     assert deterministic_unit_interval(SEED_A, 3, "0xSiteA") != deterministic_unit_interval(SEED_A, 3, "0xSiteB")
 
 
+def test_deterministic_unit_interval_accepts_int_site_without_crashing():
+    # Faz E'nin gerçek Colab koşumunda tam BURADA çöktü:
+    # replay_proofs.py site'ı int (anvil hesap indeksi) olarak geçiriyordu,
+    # eski kod sadece str varsayıp .lower() çağırıyordu -> AttributeError.
+    value = deterministic_unit_interval(SEED_A, 3, 2)
+    assert 0.0 <= value < 1.0
+
+
+def test_deterministic_unit_interval_int_and_str_site_give_same_result():
+    assert deterministic_unit_interval(SEED_A, 3, 2) == deterministic_unit_interval(SEED_A, 3, "2")
+
+
+def test_deterministic_unit_interval_same_triple_always_matches():
+    # (seed, round, site) üçlüsü aynıysa değer HER ZAMAN aynı olmalı -
+    # hem tekrarlı çağrıda hem farklı tiplerle (int/str) ifade edildiğinde.
+    for _ in range(5):
+        assert deterministic_unit_interval(SEED_A, 7, 1) == deterministic_unit_interval(SEED_A, 7, "1")
+    assert deterministic_unit_interval(SEED_A, 7, 1) != deterministic_unit_interval(SEED_B, 7, 1)
+    assert deterministic_unit_interval(SEED_A, 7, 1) != deterministic_unit_interval(SEED_A, 8, 1)
+
+
 def test_must_prove_full_mode_always_true():
     assert must_prove(1, "s", challenge_seed=SEED_A, reputation=100, reputation_threshold=50,
                        fixed_rounds=[], random_ratio=0.0, mode="full") is True
