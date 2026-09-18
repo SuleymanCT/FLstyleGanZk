@@ -796,7 +796,7 @@ anlatımı: `docs/phase_d_report.md`.
 
 ## Faz E (yerel + Colab) — Replay
 
-**durum: kod yazıldı, Colab'da HENÜZ koşulmadı/doğrulanmadı.**
+**durum: tamamlandı.**
 
 `scripts/replay_proofs.py`: mevcut 15 round'un 60 shard'ı (`{shards_dir}/round_N/site_M.pt`,
 Faz A çıktısı) üzerinde, HİÇ EĞİTİM YAPMADAN (CLAUDE.md madde 2/3),
@@ -991,10 +991,28 @@ sadece o ana kadar koşulmuş mod(lar)ın GERÇEK sonuçlarını içerir, eksik
 mod için "-" (tasarruf sütunu) ya da açık bir "henüz koşulmadı" notuyla
 dürüstçe boş bırakılır.
 
-**Kabul:** maliyet karşılaştırma tablosu üretildi. **HENÜZ KARŞILANMADI**
-— Colab'da önce `--mode full --only-first`, sonra tam `--mode full` ve
-`--mode staged` koşulup gerçek `docs/phase_e_replay.md` üretilene kadar
-bu faz "tamamlandı" sayılmayacak.
+**6. Colab koşumu — Faz E TAMAMLANDI, iki mod da sıfır başarısızlıkla
+bitti:** tam mod 60/60 ispat (ezkl 9540,2s, solc 66,5s, deploy gas
+196.880.100, verify gas 73.059.588, toplam zincir 269.939.688);
+kademeli mod 21/21 ispat (ezkl 1641,9s, solc 21,6s, deploy gas
+68.908.200, verify gas 25.572.981, toplam zincir 94.481.181).
+Tasarruf: ispat sayısı %65, ezkl süresi %82,8, zincir maliyeti %65,0.
+Kademeli takvim dağılımı: round 0/7/14 (sabit) dört site birden;
+round 1 (site 1), round 4 (site 3), round 9 (site 1,3), round 12
+(site 1,3), round 13 (site 0,2,3) — round 2/3/5/6/8/10/11'de hiç ispat
+yok (`startRound` yine de çağrıldı, ama hiçbir site tetiklenmedi).
+Tam analiz — özellikle süre tasarrufunun (%82,8) gas tasarrufundan
+(%65,0) neden yüksek olduğunun kod-doğrulanmış mekanizması ve ispat
+başına 2× ezkl süre farkının (159s vs 78s) araştırılan ama KESİN
+kanıtlanamayan olası nedenleri — `docs/phase_e_report.md`'de.
+Altyapı: her iki modda 1'er planlı anvil yeniden başlatması, sıfır
+altyapı kaynaklı başarısızlık — segment mimarisi (madde 4) beklendiği
+gibi çalıştı.
+
+**Kabul:** maliyet karşılaştırma tablosu (`docs/phase_e_replay.md`,
+script tarafından üretildi) + yorumlu analiz (`docs/phase_e_report.md`)
+GERÇEK Colab verisiyle üretildi, iki mod da tam koştu, sıfır
+başarısızlık. **KARŞILANDI.**
 
 ## Faz F (Colab) — Saldırılar ve canlı koşu
 
