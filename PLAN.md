@@ -1155,6 +1155,34 @@ seviyede SADECE `found`/`bulunamadi` anahtarları olduğunu, `z_dim`/
 uyumsuzluklarının gelecekte yeniden ORTAYA ÇIKMASINI önlemek için.
 Tam paket: 334 passed, 2 skipped.
 
+**2. Colab koşumu — CUDA custom op derlemesi başarısız
+(`ModuleNotFoundError: No module named 'bias_act_plugin'`, ninja/`CUDA_HOME`
+mevcut olmasına RAĞMEN — Colab'ın Python 3.13/güncel PyTorch
+kombinasyonunun bilinen bir sorunu):** WebFetch ile gerçek kaynak
+(`torch_utils/ops/bias_act.py`/`upfirdn2d.py`/`filtered_lrelu.py`)
+doğrulandı — bu depoda `_init()` derleme başarısız olsa bile `False`
+DÖNMÜYOR (hata `bias_act()` çağrısına kadar yükseliyor, gözlenen
+hata tam BUDUR), bu yüzden `_init()`'i yamalamak yerine (StyleGAN'ın
+kırılgan iç mantığına bağımlı olurdu) `eval.metrics.force_stylegan_ops_impl`
+eklendi — üç modülün (`bias_act`/`upfirdn2d`/`filtered_lrelu`) genel
+işlevini sarmalayıp `impl` argümanını HER ÇAĞRIDA zorluyor (internal
+katman kodu `impl=` kwarg'ını hiç geçmiyor, hep `'cuda'` varsayılanına
+güveniyor). `scripts/run_attacks.py`'ye `--ops-impl {auto,cuda,ref}`
+eklendi — `auto` (varsayılan) KÜÇÜK bir deneme üretimiyle CUDA'yı
+test edip BAŞARISIZ olursa UYARIYLA `ref`e düşüyor (sessizce
+geçmiyor), kullanılan mod sonuç JSON'una (`ops_impl` alanı) kaydediliyor.
+`class_confusion_matrix` artık `generation_seconds`/`num_generated_images`
+de döndürüyor — `estimate_full_mode_cost` bunlardan GERÇEK ölçülen
+saniye/görüntü ile `--metrics-mode full`'un (fid50k_full+kid50k_full,
+50k görüntü × 10 koşul) tahmini maliyetini (saat) hesaplayıp `ref`
+modundaysa UYARI olarak logluyor — 74s gibi bir sayı uydurulmadı,
+her koşumda TAZE hesaplanıyor. `docs/phase_f_attacks.md`'ye
+`13.13` referansıyla karşılaştırılabilirlik sınırlılığı (ref modunun
+cuda ile matematiksel eşdeğerliği bu oturumda sayısal DOĞRULANAMADI)
+not düşüldü. 6 yeni saf test (`_force_kwarg_wrapper`×3,
+`estimate_full_mode_cost`×3) yerelde doğrulandı. Tam paket: 340
+passed, 2 skipped.
+
 **Kabul (İKİ ayrı madde):**
 1. Saldırı × koruma matrisi (bu bölüm) — **HENÜZ KARŞILANMADI**, Colab
    koşumu bekleniyor.

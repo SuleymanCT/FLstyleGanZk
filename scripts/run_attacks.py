@@ -53,9 +53,23 @@ GPU, gerçek APTOS/DR veri kümesi gerektirir — SADECE Colab'da çalışır.
 Saf yardımcılar (`apply_attack`, `resolve_training_options_path`)
 `tests/test_run_attacks.py`'de yerelde test edilir.
 
+## CUDA custom op derlemesi başarısız olursa (`--ops-impl`)
+
+StyleGAN-XL'in `bias_act`/`upfirdn2d`/`filtered_lrelu` CUDA-derlemeli
+custom op'ları bazı ortamlarda (ör. Colab'ın Python 3.13/güncel
+PyTorch kombinasyonu) DERLENEMEZ (`ModuleNotFoundError: No module
+named 'bias_act_plugin'`). `--ops-impl auto` (varsayılan) bunu KÜÇÜK
+bir deneme üretimiyle tespit edip GEREKİRSE `eval.metrics.force_stylegan_ops_impl("ref")`
+ile saf PyTorch referans uygulamasına (matematiksel olarak AYNI,
+sadece YAVAŞ) düşer — bu düşüş konsola UYARIYLA loglanır, sessizce
+geçilmez. Sonuç JSON'unda hangi modun kullanıldığı `ops_impl` alanında
+kayıtlıdır. `ref` modunda ilk koşuldan sonra `--metrics-mode full`'un
+tahmini maliyeti (saat cinsinden) otomatik loglanır.
+
 Kullanım (Colab'da):
     python -m scripts.run_attacks --env colab --round 10 --metrics-mode quick   # önce ucuz sağlama
     python -m scripts.run_attacks --env colab --round 10 --metrics-mode full    # resmi fid50k_full/kid50k_full
+    python -m scripts.run_attacks --env colab --round 10 --ops-impl ref         # CUDA derlemesini hiç deneme, doğrudan ref
 """
 
 from __future__ import annotations
@@ -152,6 +166,25 @@ def build_unprotected_global(site_states: dict) -> dict:
     return running.result()
 
 
+def estimate_full_mode_cost(seconds_per_image: float, *, num_conditions: int = 10, images_per_metric_run: int = 50000, metrics_per_condition: int = 2) -> dict:
+    """`impl='ref'`e düşüldüğünde `--metrics-mode full`'un (`fid50k_full`
+    `+ kid50k_full`, İKİSİ de 50.000 görüntü ÜRETİR — WebFetch ile
+    doğrulanan resmi ayar) gerçekçi bir maliyet TAHMİNİ — `seconds_per_image`
+    GERÇEK ölçümden (`class_confusion_matrix`'in `generation_seconds`/
+    `num_generated_images`'ından) geliyor, UYDURULMUYOR. `num_conditions=10`:
+    5 saldırı × 2 koşul (bu script'in TAM koşumu)."""
+    if seconds_per_image <= 0:
+        raise ValueError(f"seconds_per_image pozitif olmalı, alınan: {seconds_per_image}")
+    seconds_per_metric_run = seconds_per_image * images_per_metric_run
+    seconds_per_condition = seconds_per_metric_run * metrics_per_condition
+    return {
+        "seconds_per_image": seconds_per_image,
+        "hours_per_condition": seconds_per_condition / 3600.0,
+        "hours_total": (seconds_per_condition * num_conditions) / 3600.0,
+        "num_conditions": num_conditions,
+    }
+
+
 def build_protected_global(prev_global: dict, site_states: dict, *, tau_norm_threshold: float) -> dict:
     """`orchestrator.aggregate.aggregate_round` DOĞRUDAN çağrılır —
     ZK-onay (`chain_approved`) + norm kapısının İKİSİ de zaten orada.
@@ -166,6 +199,42 @@ def build_protected_global(prev_global: dict, site_states: dict, *, tau_norm_thr
 # StyleGAN-XL/GPU/gerçek veri kümesine bağımlı adımlar
 # (BİLİNÇLİ TEST SINIRI — sadece Colab'da çalışır)
 # ---------------------------------------------------------------------------
+
+
+def resolve_ops_impl(ops_impl_arg: str, *, g_ema, z_dim: int, c_dim: int, device) -> str:
+    """`--ops-impl`e göre StyleGAN-XL'in CUDA-derlemeli custom
+    op'larının (`bias_act`/`upfirdn2d`/`filtered_lrelu`) hangi
+    uygulamayla (`cuda`/`ref`) çalışacağına karar verir.
+
+    `"cuda"`/`"ref"`: `eval.metrics.force_stylegan_ops_impl` ile
+    DOĞRUDAN zorlanır. `"auto"` (varsayılan): ÖNCE CUDA plugin
+    derlemesini KÜÇÜK bir deneme üretimiyle (batch_size=1) test eder;
+    BAŞARISIZ olursa (`bias_act_plugin` gibi bir derleme hatası —
+    Colab'ın Python 3.13/güncel PyTorch ortamında BİLİNEN bir sorun)
+    `ref`'e DÜŞER. Bu düşüş SESSİZCE geçilmez, net bir UYARI basılır
+    (kullanıcının açık isteği) — `--ops-impl auto` ile hangi ortamda
+    çalıştığı ÖNCEDEN bilinmeden de doğru moda GERÇEKTEN karar
+    verilir, varsayılmaz."""
+    from eval.metrics import force_stylegan_ops_impl, generate_class_images
+
+    if ops_impl_arg in ("cuda", "ref"):
+        force_stylegan_ops_impl(ops_impl_arg)
+        return ops_impl_arg
+
+    print("[run_attacks] --ops-impl auto: CUDA custom op derlemesi küçük bir deneme üretimiyle test ediliyor...")
+    try:
+        generate_class_images(g_ema, class_index=0, c_dim=c_dim, z_dim=z_dim, num_images=1, device=device, batch_size=1)
+        print("[run_attacks] --ops-impl auto: CUDA custom op'ları ÇALIŞIYOR, 'cuda' kullanılacak.")
+        return "cuda"
+    except Exception as e:  # noqa: BLE001 - CUDA derleme hatasi COK CESITLI olabilir (ModuleNotFoundError, RuntimeError, ninja hatasi...), hepsi ayni sekilde ref'e dusurulmeli
+        print(
+            f"[run_attacks] UYARI: --ops-impl auto: CUDA custom op derlemesi BAŞARISIZ "
+            f"({type(e).__name__}: {e}) — 'ref' (saf PyTorch referans) uygulamasına DÜŞÜLÜYOR. "
+            f"Bu, StyleGAN-XL'in CUDA custom ops'unun bu ortamda (ör. Python 3.13/güncel PyTorch) "
+            f"DERLENEMEDİĞİ bilinen bir durum — matematiksel sonuç AYNI, sadece daha YAVAŞ."
+        )
+        force_stylegan_ops_impl("ref")
+        return "ref"
 
 
 def evaluate_condition(
@@ -236,6 +305,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     )
     parser.add_argument("--only-attack", default=None, help="virgülle ayrılmış saldırı adı listesi — sadece bunları koştur (bkz. ATTACK_NAMES)")
     parser.add_argument("--force", action="store_true", help="zaten sonuçlanmış (saldırı,koşul) çiftlerini yeniden çalıştır")
+    parser.add_argument(
+        "--ops-impl", default="auto", choices=["auto", "cuda", "ref"],
+        help="StyleGAN-XL custom op'ları (bias_act/upfirdn2d/filtered_lrelu). 'auto' (varsayılan): CUDA'yı dener, "
+             "derleme başarısızsa UYARIYLA 'ref'e düşer. 'cuda'/'ref': doğrudan zorla.",
+    )
     return parser.parse_args(argv)
 
 
@@ -284,6 +358,10 @@ def main(argv=None) -> int:
         raise RuntimeError(f"Beklenen c_dim={DR_NUM_CLASSES}, gerçek G_ema.c_dim={dims['c_dim']} — DR sınıf sayısı varsayımı YANLIŞ, sabitleri güncelle.")
     print(f"[run_attacks] Boyutlar: {dims}")
 
+    ops_impl_used = resolve_ops_impl(args.ops_impl, g_ema=g_ema_shell, z_dim=dims["z_dim"], c_dim=dims["c_dim"], device=device)
+    print(f"[run_attacks] ops_impl={ops_impl_used}")
+    extrapolation_logged = False
+
     training_options_path = resolve_training_options_path(paths["raw_root"], args.round, 0)
     print(f"[run_attacks] Ölçüm ayarları okunuyor: {training_options_path}")
     metric_options = load_metric_options_from_training_options(training_options_path, dataset_root_override=args.dataset_root)
@@ -329,6 +407,7 @@ def main(argv=None) -> int:
             all_results[key] = {
                 "attack": attack_name,
                 "condition": condition,
+                "ops_impl": ops_impl_used,
                 "poisoned_site_included": poisoned_included,
                 "delta_norm": delta_norm,
                 "norm_caught": norm_caught,
@@ -339,6 +418,25 @@ def main(argv=None) -> int:
             }
             save_attack_results(all_results, results_path)
             print(f"[run_attacks] '{key}' tamamlandı, {results_path} güncellendi.")
+
+            if not extrapolation_logged:
+                extrapolation_logged = True
+                confusion = metrics_result["class_confusion"]
+                seconds_per_image = confusion["generation_seconds"] / confusion["num_generated_images"]
+                print(f"[run_attacks] Üretim hızı ({ops_impl_used}): {seconds_per_image:.3f}s/görüntü ({confusion['num_generated_images']} görüntü, {confusion['generation_seconds']:.1f}s).")
+                if ops_impl_used == "ref":
+                    cost = estimate_full_mode_cost(seconds_per_image, num_conditions=len(attack_names) * len(CONDITIONS))
+                    print(
+                        f"[run_attacks] UYARI: 'ref' modunda --metrics-mode full tahmini maliyet: "
+                        f"koşul başına ~{cost['hours_per_condition']:.1f} saat, "
+                        f"TOPLAM ({cost['num_conditions']} koşul) ~{cost['hours_total']:.1f} saat "
+                        f"(SADECE görüntü üretimi — Inception özellik çıkarımı/KID hesaplaması HARİÇ, ek zaman gerektirir). "
+                        f"Bu pratik olmayabilir — alternatifler: (a) --only-attack ile saldırı sayısını azalt, "
+                        f"(b) daha az riskli olsa da resmi fid50k_full yerine daha küçük bir num_gen ile özel bir "
+                        f"ölçüm (mevcut ayarlarla karşılaştırılabilirliği bozar, dikkatli kullanılmalı), "
+                        f"(c) CUDA custom op derlemesini bu Colab ortamında (farklı PyTorch/CUDA sürümü, "
+                        f"ör. `pip install torch==<uyumlu sürüm>`) çalışır hale getirmeyi dene."
+                    )
 
         del poisoned_state, site_states
         gc.collect()

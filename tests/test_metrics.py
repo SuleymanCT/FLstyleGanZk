@@ -11,6 +11,7 @@ import pytest
 import torch
 
 from eval.metrics import (
+    _force_kwarg_wrapper,
     build_fixed_class_batch,
     compute_kid_from_features,
     load_metric_options_from_training_options,
@@ -149,3 +150,34 @@ def test_to_uint8_images_clamps_out_of_range_values():
     result = to_uint8_images(raw)
     assert result[0].item() == 0
     assert result[1].item() == 255
+
+
+# --- _force_kwarg_wrapper (force_stylegan_ops_impl'in saf çekirdeği) ---
+# Faz F'nin Colab koşumunda StyleGAN-XL'in CUDA custom op derlemesi
+# ('bias_act_plugin') başarısız oldu; internal katman kodu 'impl='
+# kwarg'ını hiç geçmediği için _init()'i yamalamak yerine bu
+# sarmalayıcıyla HER çağrıda impl='ref' ZORLANIYOR.
+
+
+def test_force_kwarg_wrapper_forces_kwarg_even_when_caller_passes_different_value():
+    def original(x, impl="cuda"):
+        return impl
+
+    wrapped = _force_kwarg_wrapper(original, "impl", "ref")
+    assert wrapped(1, impl="cuda") == "ref"
+
+
+def test_force_kwarg_wrapper_forces_kwarg_when_caller_omits_it_entirely():
+    def original(x, impl="cuda"):
+        return impl
+
+    wrapped = _force_kwarg_wrapper(original, "impl", "ref")
+    assert wrapped(1) == "ref"
+
+
+def test_force_kwarg_wrapper_passes_through_other_args_and_kwargs_unchanged():
+    def original(x, y, impl="cuda"):
+        return (x, y, impl)
+
+    wrapped = _force_kwarg_wrapper(original, "impl", "ref")
+    assert wrapped(3, y=4) == (3, 4, "ref")

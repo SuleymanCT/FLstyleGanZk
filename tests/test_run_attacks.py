@@ -9,7 +9,7 @@ import os
 import pytest
 import torch
 
-from scripts.run_attacks import ATTACK_NAMES, apply_attack, resolve_training_options_path, result_key
+from scripts.run_attacks import ATTACK_NAMES, apply_attack, estimate_full_mode_cost, resolve_training_options_path, result_key
 
 
 def _synthetic_site_and_prev():
@@ -98,3 +98,30 @@ def test_resolve_training_options_path_missing_file_raises(tmp_path):
     run_dir.mkdir(parents=True)
     with pytest.raises(FileNotFoundError):
         resolve_training_options_path(str(tmp_path), 10, 0)
+
+
+# --- estimate_full_mode_cost (ref moda düşüldüğünde --metrics-mode full
+# ekstrapolasyonu — Faz F'nin gerçek Colab koşumunda CUDA custom op
+# derlemesi başarısız oldu, bu tahmin GERÇEK ölçülen seconds_per_image'dan
+# hesaplanıyor, uydurulmuyor) ---
+
+
+def test_estimate_full_mode_cost_matches_manual_arithmetic():
+    # 1 saniye/görüntü, 50000 görüntü/metrik * 2 metrik = 100000s/koşul = ~27.78 saat
+    result = estimate_full_mode_cost(1.0, num_conditions=10, images_per_metric_run=50000, metrics_per_condition=2)
+    assert result["hours_per_condition"] == pytest.approx(100000 / 3600)
+    assert result["hours_total"] == pytest.approx(100000 / 3600 * 10)
+    assert result["num_conditions"] == 10
+
+
+def test_estimate_full_mode_cost_scales_linearly_with_seconds_per_image():
+    slow = estimate_full_mode_cost(2.0, num_conditions=5)
+    fast = estimate_full_mode_cost(1.0, num_conditions=5)
+    assert slow["hours_total"] == pytest.approx(fast["hours_total"] * 2)
+
+
+def test_estimate_full_mode_cost_raises_on_non_positive_input():
+    with pytest.raises(ValueError, match="pozitif"):
+        estimate_full_mode_cost(0.0)
+    with pytest.raises(ValueError, match="pozitif"):
+        estimate_full_mode_cost(-1.0)

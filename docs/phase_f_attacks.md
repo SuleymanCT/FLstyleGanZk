@@ -70,6 +70,23 @@ yüzden o madde AYRI bir iş olarak PLAN.md'de bırakıldı (bu fazın
 kapsamına DAHİL EDİLMEDİ) — istenirse ayrı bir istek olarak ele
 alınabilir.
 
+### 4. CUDA custom op derlemesi başarısız — `ref` moduna geçiş
+
+Colab koşumunda StyleGAN-XL'in `bias_act`/`upfirdn2d`/`filtered_lrelu`
+CUDA-derlemeli custom op'ları derlenemedi (`ModuleNotFoundError: No
+module named 'bias_act_plugin'`, ninja+`CUDA_HOME` mevcut olmasına
+RAĞMEN — Colab'ın Python 3.13/güncel PyTorch kombinasyonunun bilinen
+bir sorunu). WebFetch ile gerçek kaynak (`torch_utils/ops/bias_act.py`/
+`upfirdn2d.py`/`filtered_lrelu.py`) doğrulandı: `_init()`'i yamalamak
+kırılgan olurdu (bu depoda `_init()` derleme başarısız olsa bile
+`False` DÖNMÜYOR — hata `bias_act()` çağrısına kadar yükseliyor,
+tam gözlenen hata BUDUR). Bunun yerine `eval.metrics.force_stylegan_ops_impl`
+üç modülün genel işlevini SARMALAYIP `impl` argümanını HER ÇAĞRIDA
+zorluyor (internal katman kodu `impl=` kwarg'ını hiç geçmiyor, hep
+`'cuda'` varsayılanına güveniyor). `--ops-impl auto` (varsayılan)
+küçük bir deneme üretimiyle CUDA'yı test edip BAŞARISIZ olursa
+UYARIYLA `ref`'e düşüyor; `ops_impl` alanı sonuç JSON'una kaydediliyor.
+
 ## Yöntem
 
 1. `scripts/run_attacks.py`, `--round`'un 4 site'ının GERÇEK
@@ -105,7 +122,36 @@ alınabilir.
 | conditional_poison | protected | — | — | — | — | — | — | — | — |
 
 (Referans: mevcut deneyin korumasız FID'i `13.13` — `fid50k_full`,
-BİREBİR aynı ölçüm ayarlarıyla karşılaştırılabilir olması gerekiyor.)
+BİREBİR aynı ölçüm ayarlarıyla karşılaştırılabilir olması gerekiyor —
+ama bkz. aşağıdaki "Sınırlılık: `13.13` ile karşılaştırılabilirlik".)
+
+## Sınırlılık: `13.13` ile karşılaştırılabilirlik (`ops_impl` moduna bağlı)
+
+Faz A'daki mevcut `fid50k_full=13.13` ölçümü, ORİJİNAL eğitim
+ortamında (CUDA custom op'ları BAŞARIYLA derlenmiş, `impl='cuda'`)
+yapıldı. Bu Colab oturumunda CUDA derlemesi BAŞARISIZ olduysa
+(`ops_impl='ref'`, bkz. yukarıdaki "Tasarım kararları" madde 4) bu
+fazın FID ölçümleri saf PyTorch REFERANS uygulamasıyla hesaplanıyor.
+`bias_act`/`upfirdn2d`/`filtered_lrelu`'nun `ref` yolu MATEMATİKSEL
+OLARAK `cuda` yoluyla AYNI sonucu üretmesi GEREKİR (StyleGAN-XL'in
+kendi tasarım amacı budur — `cuda` sadece bir HIZ optimizasyonu) ama
+bu eşdeğerlik BU PROJEDE doğrudan sayısal olarak DOĞRULANMADI (ör.
+aynı ağırlıkla hem `cuda` hem `ref` modunda FID ölçüp fark
+KIYASLANMADI — orijinal ortamda CUDA derlemesi başarısız olduğundan
+böyle bir karşılaştırma bu oturumda YAPILAMADI). Bu yüzden:
+
+- **Saldırı × koruma matrisinin İÇ karşılaştırmaları GEÇERLİ**: aynı
+  koşumdaki TÜM hücreler (5 saldırı × 2 koşul) AYNI `ops_impl` ile
+  ölçülüyor — göreli farklar (unprotected vs protected, saldırı A vs
+  B) tutarlı bir zeminde karşılaştırılıyor.
+- **`13.13` referansıyla DOĞRUDAN karşılaştırma, `ops_impl='ref'` ise
+  DİKKAT gerektirir** — teorik olarak eşdeğer olması gereken ama bu
+  oturumda sayısal olarak DOĞRULANAMAYAN bir varsayıma dayanıyor. Bu
+  makalenin sınırlılıklar bölümüne AÇIKÇA yazılmalı; mümkünse ileride
+  CUDA derlemesinin çalıştığı bir ortamda (`--ops-impl cuda` başarılı
+  olursa) `unprotected`/`conditional_poison` YOK koşulunun FID'i
+  ayrıca ölçülüp `13.13` ile DOĞRUDAN karşılaştırılarak bu varsayım
+  kapatılabilir.
 
 ## Beklenen (ama VARSAYILMAYAN, Colab'da doğrulanacak) desen
 

@@ -38,6 +38,7 @@ from __future__ import annotations
 import inspect
 import json
 import os
+import time
 
 import numpy as np
 import torch
@@ -162,6 +163,21 @@ def build_fixed_class_batch(batch_size: int, class_index: int, z_dim: int, c_dim
     return z, c
 
 
+def _force_kwarg_wrapper(original_fn, kwarg_name: str, kwarg_value):
+    """`original_fn`'i, HER çağrıda `kwarg_name=kwarg_value`'yu
+    ZORLAYAN bir sarmalayıcıya çevirir — çağıran taraf o kwarg'ı hiç
+    geçmese (StyleGAN-XL'in internal katmanlarının YAPTIĞI gibi) BİLE
+    zorlanan değer kullanılır. `force_stylegan_ops_impl`'in saf,
+    testable çekirdeği — StyleGAN-XL'e bağımlı DEĞİL, herhangi bir
+    fonksiyonla test edilebilir."""
+
+    def wrapped(*args, **kwargs):
+        kwargs[kwarg_name] = kwarg_value
+        return original_fn(*args, **kwargs)
+
+    return wrapped
+
+
 def to_uint8_images(raw_images: torch.Tensor) -> torch.Tensor:
     """StyleGAN-XL'in ÖZGÜN ölçekleme formülü (WebFetch ile
     `metrics/metric_utils.py: compute_feature_stats_for_generator`'dan
@@ -176,6 +192,53 @@ def to_uint8_images(raw_images: torch.Tensor) -> torch.Tensor:
 # StyleGAN-XL/GPU/gerçek veri kümesine bağımlı adımlar
 # (BİLİNÇLİ TEST SINIRI — sadece Colab'da çalışır/test edilir)
 # ---------------------------------------------------------------------------
+
+# StyleGAN-XL'in CUDA-derlemeli üç custom-op modülü — WebFetch ile
+# gerçek kaynaktan doğrulandı: `bias_act.bias_act`/`upfirdn2d.upfirdn2d`/
+# `filtered_lrelu.filtered_lrelu`'nün ÜÇÜ de `impl='cuda'` VARSAYILAN
+# değeriyle çağrılıyor, `training/networks_stylegan3.py` gibi internal
+# katman kodu `impl=` kwarg'ını HİÇ GEÇMİYOR. `_ORIGINAL_OPS_FUNCTIONS`
+# `force_stylegan_ops_impl` TEKRAR TEKRAR çağrılsa bile (ör. önce
+# 'cuda' denenip sonra 'ref'e düşülse) HER ZAMAN gerçek orijinal
+# fonksiyona sarmalayabilmek için bir kerelik dolduruluyor.
+_OPS_MODULE_ATTRS = {"bias_act": "bias_act", "upfirdn2d": "upfirdn2d", "filtered_lrelu": "filtered_lrelu"}
+_ORIGINAL_OPS_FUNCTIONS: dict = {}
+
+
+def force_stylegan_ops_impl(impl: str) -> None:
+    """StyleGAN-XL'in üç CUDA-derlemeli custom-op modülünün
+    (`torch_utils.ops.bias_act`/`upfirdn2d`/`filtered_lrelu`) HER
+    ÇAĞRISINI `impl` değerine ZORLAR.
+
+    **Neden `_init()`'i yamalamak yerine bu yol seçildi:** WebFetch ile
+    gerçek kaynak doğrulandı — bu depodaki `bias_act._init()`
+    derleme BAŞARISIZ olsa bile İÇ MANTIK gereği `False` DÖNMÜYOR
+    (hata `custom_ops.get_plugin`'den `bias_act()` çağrısına kadar
+    YÜKSELİYOR, `ModuleNotFoundError: No module named 'bias_act_plugin'`
+    tam BÖYLE ortaya çıkıyor). `_init()`'i yamalamak StyleGAN'ın bu iç
+    (ve versiyon-kırılgan) mantığına bağımlı olurdu. Bunun yerine üç
+    modülün KENDİ genel işlevi sarmalanıp `impl` HER ÇAĞRIDA ZORLANIYOR
+    — hangi katman `impl=` kwarg'ını geçerse geçsin (StyleGAN-XL'in
+    kendi katmanları HİÇ geçmiyor) SONUÇ her zaman aynı.
+
+    `impl='ref'`: saf PyTorch referans uygulaması — matematiksel olarak
+    AYNI sonucu verir (CUDA derlemesi GEREKMEZ, ama YAVAŞ). `impl='cuda'`:
+    orijinal davranışa (derleme başarılıysa hızlı yol) DÖNÜŞ."""
+    if impl not in ("ref", "cuda"):
+        raise ValueError(f"impl {impl!r} geçersiz — 'ref' ya da 'cuda' olmalı.")
+
+    import torch_utils.ops.bias_act as bias_act_module
+    import torch_utils.ops.filtered_lrelu as filtered_lrelu_module
+    import torch_utils.ops.upfirdn2d as upfirdn2d_module
+
+    modules = {"bias_act": bias_act_module, "upfirdn2d": upfirdn2d_module, "filtered_lrelu": filtered_lrelu_module}
+    for label, attr_name in _OPS_MODULE_ATTRS.items():
+        module_obj = modules[label]
+        if label not in _ORIGINAL_OPS_FUNCTIONS:
+            _ORIGINAL_OPS_FUNCTIONS[label] = getattr(module_obj, attr_name)
+        setattr(module_obj, attr_name, _force_kwarg_wrapper(_ORIGINAL_OPS_FUNCTIONS[label], "impl", impl))
+
+    print(f"[eval.metrics] StyleGAN-XL custom op'ları (bias_act/upfirdn2d/filtered_lrelu) impl='{impl}' olarak ZORLANDI.")
 
 
 def run_official_metric(metric_name: str, g_ema, *, dataset_kwargs: dict, num_gpus: int = 1, device=None) -> dict:
@@ -296,6 +359,7 @@ def class_confusion_matrix(
     ölçütü — bkz. modül docstring'i ve `docs/phase_f_attacks.md`)."""
     device_ = device
     detector = get_feature_detector(device_)
+    generation_seconds = 0.0
 
     real_features_by_class: dict[int, np.ndarray] = {}
     for r in range(num_classes):
@@ -306,10 +370,12 @@ def class_confusion_matrix(
     kid_matrix: list[list[float]] = [[0.0] * num_classes for _ in range(num_classes)]
     perceived_class: list[int] = [0] * num_classes
     for g in range(num_classes):
+        t_gen = time.perf_counter()
         gen_images = generate_class_images(
             g_ema, class_index=g, c_dim=num_classes, z_dim=z_dim, num_images=num_images_per_class,
             device=device_, batch_size=batch_size, seed=seed,
         )
+        generation_seconds += time.perf_counter() - t_gen
         gen_features = extract_features(detector, gen_images, device_)
         del gen_images
         rng = np.random.default_rng(seed)
@@ -323,4 +389,6 @@ def class_confusion_matrix(
         "perceived_class": perceived_class,
         "swap_detected": swap_detected,
         "num_images_per_class": num_images_per_class,
+        "generation_seconds": generation_seconds,
+        "num_generated_images": num_classes * num_images_per_class,
     }
