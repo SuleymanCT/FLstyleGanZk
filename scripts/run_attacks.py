@@ -31,11 +31,20 @@ alıp bozup FedAvg yapar.
    `attacks/detection.py`'nin gerekçesi: ZK bir İÇERİK filtresi
    DEĞİL, taahhüt-ispat-katkı TUTARLILIK kanıtı — bu simülasyondaki
    "dürüst ama bozulmuş" istemci modelinde ZK HER ZAMAN geçerdi).
-6. Her iki koşul için de sonuç global `G_ema`'nın ("shell" — 4 site'tan
+   Norm eşiğini AŞMAYAN bir saldırı (gerçek Colab bulgusu:
+   `conditional_poison`, `||ΔG||=2507 < tau=3000`) protected koşulda
+   da DIŞLANMAZ — bu durumda unprotected/protected SONUÇLARI BİREBİR
+   AYNI çıkar, bu bir HATA değil, korumanın o saldırıyı DURDURAMADIĞININ
+   doğrudan kanıtıdır.
+6. **POISONED_ALONE** (H1 tanı koşulu — bkz. `build_poisoned_alone_global`):
+   FedAvg'ı TAMAMEN ATLAYIP zehirli site'ın KENDİ ağırlığını "global"
+   olarak kullanır — 3 dürüst site'ın seyreltme etkisi OLMADAN saldırı
+   TEK BAŞINA nasıl görünüyor, bunu izole eder.
+7. Her koşul için de sonuç global `G_ema`'nın ("shell" — 4 site'tan
    birinin GERÇEK, sadece state_dict'i DEĞİŞTİRİLECEK modülü) içine
    yüklenir, `eval/metrics.py` ile `fid50k_full`/`kid50k_full`
    (`--metrics-mode full`) + sınıf-tutarlılığı matrisi hesaplanır.
-7. Tespit analizi: `attacks/detection.py: verify_commitment_consistency`
+8. Tespit analizi: `attacks/detection.py: verify_commitment_consistency`
    (ZK) + `orchestrator.aggregate.gate_site_update`'in `delta_norm`/
    dışlama sonucu (norm) — İKİSİ de GERÇEKTEN hesaplanır, varsayılmaz.
 
@@ -126,7 +135,7 @@ DR_NUM_CLASSES = 5
 SWAP_ROW_A, SWAP_ROW_B = 0, 4  # DR-0 / DR-4 (kullanıcının belirttiği saldırı hedefi)
 
 ATTACK_NAMES = ("random_weights", "scaled_poison_10x", "scaled_poison_50x", "scaled_poison_100x", "conditional_poison")
-CONDITIONS = ("unprotected", "protected")
+CONDITIONS = ("unprotected", "protected", "poisoned_alone")
 
 FULL_CLASS_IMAGES_PER_CLASS = 200
 QUICK_CLASS_IMAGES_PER_CLASS = 20
@@ -213,7 +222,7 @@ def estimate_full_mode_cost(seconds_per_image: float, *, num_conditions: int = 1
     doğrulanan resmi ayar) gerçekçi bir maliyet TAHMİNİ — `seconds_per_image`
     GERÇEK ölçümden (`class_confusion_matrix`'in `generation_seconds`/
     `num_generated_images`'ından) geliyor, UYDURULMUYOR. `num_conditions=10`:
-    5 saldırı × 2 koşul (bu script'in TAM koşumu)."""
+    5 saldırı × 3 koşul (bu script'in TAM koşumu, `poisoned_alone` dahil)."""
     if seconds_per_image <= 0:
         raise ValueError(f"seconds_per_image pozitif olmalı, alınan: {seconds_per_image}")
     seconds_per_metric_run = seconds_per_image * images_per_metric_run
@@ -234,6 +243,19 @@ def build_protected_global(prev_global: dict, site_states: dict, *, tau_norm_thr
     docstring'i, madde 5)."""
     chain_approved = {site: True for site in site_states}
     return aggregate_round(prev_global, site_states, tau_norm_threshold=tau_norm_threshold, chain_approved=chain_approved)
+
+
+def build_poisoned_alone_global(poisoned_state: dict, poisoned_site) -> dict:
+    """H1 TANI KOŞULU — FedAvg'ı TAMAMEN ATLAYIP zehirli site'ın
+    KENDİ (tek başına) ağırlığını "global" olarak kullanır. Gerçek
+    Colab bulgusu: `conditional_poison`'ın DR-0/DR-4 takası FedAvg'lı
+    (4 site, zehirli site 1/4 ağırlıkla) sonuç matrisinde GÖRÜNMEDİ
+    (köşegen korunmuş). Bu, saldırının 3 dürüst site tarafından
+    SEYRELTİLDİĞİ hipotezini (H1) doğrudan test eder — bu koşulda
+    seyreltme YOK (tek site, ağırlık 1.0), takas hâlâ görünmüyorsa H1
+    ELENİR ve sorun gömme takasının kendisinde (H2) ya da ölçüm
+    duyarlılığında (H3) aranmalı."""
+    return {"global_state": poisoned_state, "included_sites": [poisoned_site], "gate_results": None}
 
 
 # ---------------------------------------------------------------------------
@@ -388,7 +410,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--attacks-dir", default=None, help="varsayılan: {zk_root}/attacks")
     parser.add_argument(
         "--metrics-mode", default="full", choices=["full", "quick", "custom"],
-        help="'full': resmi fid50k_full/kid50k_full (saatler sürebilir, 5 saldırı x 2 koşul x 50k görüntü — "
+        help="'full': resmi fid50k_full/kid50k_full (saatler sürebilir, 5 saldırı x 3 koşul x 50k görüntü — "
              "'ref' modunda GENELLİKLE PRATİK DEĞİL, bkz. koşum başındaki maliyet ekstrapolasyonu). "
              "'quick': FID/KID ATLANIR, sadece küçük örnekli sınıf-tutarlılığı koşulur (dakikalar, önce sağlama için). "
              "'custom': GERÇEK ama küçük örnekli (--fid-num-gen) bir FID/KID — 13.13 İLE KARŞILAŞTIRILAMAZ, "
@@ -503,8 +525,10 @@ def main(argv=None) -> int:
             print(f"[run_attacks] --- koşul: {condition} ---")
             if condition == "unprotected":
                 aggregation = {"global_state": build_unprotected_global(site_states), "included_sites": list(site_states), "gate_results": None}
-            else:
+            elif condition == "protected":
                 aggregation = build_protected_global(prev_global_state, site_states, tau_norm_threshold=tau)
+            else:  # "poisoned_alone" — H1 tanı koşulu, bkz. build_poisoned_alone_global docstring'i
+                aggregation = build_poisoned_alone_global(poisoned_state, args.poisoned_site)
 
             poisoned_included = args.poisoned_site in aggregation["included_sites"]
             print(f"[run_attacks] '{key}': zehirli site dahil mi? {poisoned_included}")

@@ -11,7 +11,9 @@ import torch
 
 from scripts.run_attacks import (
     ATTACK_NAMES,
+    CONDITIONS,
     apply_attack,
+    build_poisoned_alone_global,
     estimate_full_mode_cost,
     parse_args,
     pick_default_gen_batch_size,
@@ -181,3 +183,27 @@ def test_parse_args_accepts_custom_metrics_mode_and_fid_num_gen():
 def test_parse_args_fid_num_gen_defaults_to_none():
     args = parse_args([])
     assert args.fid_num_gen is None
+
+
+# --- build_poisoned_alone_global (H1 tanı koşulu) ---
+# Gerçek Colab bulgusu: conditional_poison'ın DR-0/DR-4 takası FedAvg'lı
+# (4 site) sonuç matrisinde GÖRÜNMEDİ - H1 hipotezi bunun 3 dürüst
+# site tarafından SEYRELTİLMESİNDEN kaynaklanıp kaynaklanmadığını,
+# FedAvg'ı TAMAMEN ATLAYIP zehirli site'ı TEK BAŞINA izole ederek
+# test ediyor.
+
+
+def test_conditions_includes_poisoned_alone():
+    assert "poisoned_alone" in CONDITIONS
+
+
+def test_build_poisoned_alone_global_uses_poisoned_state_directly_no_averaging():
+    poisoned_state = {"mapping.embed.weight": torch.ones(5, 4) * 99.0}
+    result = build_poisoned_alone_global(poisoned_state, poisoned_site=2)
+    assert result["global_state"] is poisoned_state
+    assert torch.equal(result["global_state"]["mapping.embed.weight"], poisoned_state["mapping.embed.weight"])
+
+
+def test_build_poisoned_alone_global_only_includes_the_poisoned_site():
+    result = build_poisoned_alone_global({"a": torch.zeros(1)}, poisoned_site=3)
+    assert result["included_sites"] == [3]

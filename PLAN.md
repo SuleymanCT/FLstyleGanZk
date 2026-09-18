@@ -1268,6 +1268,32 @@ takasını gösterip göstermediği bu dosyanın (en azından
 7 yeni saf test (`assert_module_on_device`×2, `is_device_mismatch_error`×3,
 CLI×2) yerelde doğrulandı. Tam paket: 356 passed, 2 skipped.
 
+**5. Colab koşumu — `conditional_poison`'ın sınıf-tutarlılığı matrisi
+geldi, takas GÖRÜNMÜYOR (yeni araştırma):** unprotected/protected
+BİREBİR AYNI (BEKLENEN — koruma zaten bu saldırıyı durduramadı, madde
+4). Ama matrisin kendisi: istenen DR-0 → en yakın gerçek DR-0
+(0.0489, beklenen DR-4); istenen DR-4 → en yakın gerçek DR-1 (0.0599,
+beklenen DR-0) — köşegen BÜYÜK ÖLÇÜDE korunmuş, takas GÖRÜNMÜYOR.
+Üç hipotez sırayla test ediliyor: **H1** FedAvg seyreltmesi (zehirli
+site 1/4 ağırlıkla katkıda bulunuyor), **H2** gömme takası yetersiz
+(sınıf bilgisi embed_proj/fc0/fc1'den de akıyor olabilir), **H3** KID
+ayrım gücü yetersiz (quick modun 20 görüntü/sınıf'ı az, DR sınıfları
+zaten görsel olarak yakın). Kullanıcının talimatıyla SADECE H1 testi
+yazıldı: `scripts/run_attacks.py`'ye yeni bir tanı koşulu eklendi —
+**`poisoned_alone`** (`CONDITIONS` artık 3 eleman) —
+`build_poisoned_alone_global` FedAvg'ı TAMAMEN ATLAYIP zehirli
+site'ın KENDİ ağırlığını (seyreltme yok) doğrudan "global" olarak
+kullanıp aynı FID+sınıf-tutarlılığı işlem hattından geçiriyor, TÜM
+saldırılar için otomatik hesaplanıyor. **Önerilen güçlendirme (H1
+doğrulanırsa)**: birden fazla kötücül site EKLEMEK yerine (tehdit
+modelini değiştirir), `scaled_poison`'ın ΔG-ölçekleme mantığının
+AYNISI `conditional_poison`'a uygulanabilir —
+`poisoned_row = 4*target_row - 3*honest_row` (FedAvg SONRASI ortalama
+TAM hedefe ulaşacak şekilde kompanse edilmiş katkı) — bu kod HENÜZ
+YAZILMADI, H1 sonucunu bekliyor. 3 yeni saf test
+(`build_poisoned_alone_global`×2, `CONDITIONS` içeriği×1) yerelde
+doğrulandı. Tam paket: 359 passed, 2 skipped.
+
 **Kabul (İKİ ayrı madde):**
 1. Saldırı × koruma matrisi (bu bölüm) — **HENÜZ KARŞILANMADI**, Colab
    koşumu bekleniyor.

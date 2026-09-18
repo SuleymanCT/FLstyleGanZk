@@ -261,6 +261,86 @@ satırları için asıl kanıt sınıf-tutarlılığı matrisinin DR-0/DR-4
 karışıklığı gösterip göstermediği — bu, `attack_results.json`
 okunduğunda KESİNLEŞECEK.
 
+## `conditional_poison`'ın sınıf-tutarlılığı matrisi GELDİ — takas GÖRÜNMÜYOR (yeni sorun, araştırılıyor)
+
+Kullanıcının paylaştığı GERÇEK matris (unprotected/protected — Bölüm
+"ANA TABLO"nun gösterdiği gibi BİREBİR AYNI, çünkü koruma bu saldırıyı
+zaten durduramadı):
+
+| istenen sınıf | en yakın gerçek sınıf (argmin KID) | KID değeri | beklenen (takas varsayımıyla) |
+|---|---|---|---|
+| DR-0 | DR-0 | 0.0489 | DR-4 |
+| DR-4 | DR-1 | 0.0599 | DR-0 |
+
+`swap_detected` DR-2 ve DR-4 için `true` dönüyor ama bunlar
+UYGULANAN takasla (DR-0↔DR-4) İLGİSİZ — köşegen BÜYÜK ÖLÇÜDE
+korunmuş. **Takas, üretilen görüntülerin sınıf kimliğinde
+GÖRÜNMÜYOR.** Üç hipotez, SIRAYLA test ediliyor:
+
+- **H1 — FedAvg seyreltmesi**: zehirli site 4 siteden biri, takaslanmış
+  gömme sadece 1/4 ağırlıkla ortalamaya giriyor, diğer 3 site DOĞRU
+  gömmeyi getiriyor — ortalama sonuç orijinal gömmeye YAKIN kalmış
+  olabilir.
+- **H2 — Gömme takası yetersiz**: sınıf bilgisi SADECE `embed`
+  satırında değil, `embed_proj`/`fc0`/`fc1` üzerinden de akıyor
+  olabilir — takas `w` vektörünü GERÇEKTEN değiştirmiyor olabilir.
+- **H3 — KID ayrım gücü yetersiz**: 20 görüntü/sınıf (quick mod) az,
+  DR sınıfları görsel olarak zaten YAKIN (matris değerleri dar bir
+  `0.04-0.11` aralığında) — ayrım GÜCÜ yetersiz kalıyor olabilir.
+
+### H1 testi — ŞİMDİ eklendi, Colab'da koşulmayı bekliyor
+
+`scripts/run_attacks.py`'ye YENİ bir tanı koşulu eklendi:
+**`poisoned_alone`** (`CONDITIONS` artık `("unprotected", "protected",
+"poisoned_alone")`) — `build_poisoned_alone_global` FedAvg'ı TAMAMEN
+ATLAYIP zehirli site'ın KENDİ ağırlığını (seyreltme YOK, ağırlık 1.0)
+doğrudan "global" olarak kullanıp AYNI `evaluate_condition` (FID +
+sınıf-tutarlılığı) işlem hattından geçiriyor. Bu koşul TÜM saldırılar
+için otomatik hesaplanıyor (sadece `conditional_poison` için özel bir
+dal AÇILMADI — aynı mekanizma her saldırı için tutarlı bir
+karşılaştırma tabanı sağlıyor).
+
+**Yorumlama kılavuzu:**
+- `poisoned_alone`'da takas (DR-0→DR-4, DR-4→DR-0) GÖRÜNÜYORSA → **H1
+  DOĞRU** (seyreltme sorunu) — saldırı GÜÇLENDİRİLMELİ (aşağıdaki
+  öneriye bakın).
+- `poisoned_alone`'da DA görünmüyorsa → **H1 ELENDİ**, sıradaki adım
+  H2 testi (aynı `z` ile takas öncesi/sonrası `w` çıktısını
+  karşılaştırmak — kod HENÜZ yazılmadı, kullanıcının isteği üzerine
+  ÖNCE H1 sonucu bekleniyor).
+
+### Eğer H1 doğrulanırsa (seyreltme confirmed): önerilen güçlendirme
+
+Kullanıcının sorduğu "hangi yolu önerirsin" sorusuna cevap: **basit
+takas yerine, ortalama sonucun HEDEFE ulaşacağı şekilde
+KOMPANSE EDİLMİŞ bir gömme değeri öneriyorum** — birden fazla
+kötücül site EKLEMEK yerine (bu, TEHDİT MODELİNİ "tek kötücül site"
+yerine "koordineli çoklu kötücül site"ye DEĞİŞTİRİR, ki bu ayrı ve
+daha güçlü bir varsayım gerektirir; `scaled_poison`'ın zaten kapsadığı
+"tek site ne kadar agresif olabilir" sorusuna da karşılık gelmez).
+Gerekçe: `scaled_poison`, ΔG'yi ÖLÇEKLEYEREK aynı seyreltme sorununu
+ZATEN çözdü (FedAvg'ın 1/4 ağırlığını telafi etmek için saldırıyı
+BÜYÜTTÜ) — AYNI mantık `conditional_poison`'a da uygulanabilir:
+basit satır takası yerine, zehirli site'ın KATKISI
+
+```
+poisoned_row = 4 * target_row - 3 * honest_row
+```
+
+olarak hesaplanmalı — burada `target_row` takas hedefi (ör. DR-4'ün
+gerçek gömme satırı), `honest_row` DR-0'ın (değiştirilmeden önceki)
+gerçek gömme satırı. `(3*honest_row + poisoned_row)/4 = target_row`
+eşitliğini SAĞLAYACAK şekilde çözülmüş — yani FedAvg SONRASI ortalama
+TAM OLARAK hedef değere ulaşıyor, basit takasın aksine (ki o zaten
+1/4'e seyreliyordu). Bu, `attacks/conditional_poison.py`'ye
+`swap_embed_rows`'un YANINA (onun YERİNE değil — basit takas kendi
+başına da GEÇERLİ bir "en kaba koşullu saldırı" senaryosu, ayrı
+tutulmalı) yeni bir `compensated_swap_embed_rows(state_dict, row_a,
+row_b, num_sites, *, embed_key)` fonksiyonu olarak eklenebilir —
+`num_sites` FedAvg'daki toplam site sayısı (bu projede 4). **Bu kod
+HENÜZ yazılmadı** — H1 sonucunu bekliyor, kullanıcının "sonuca göre
+devam ederiz" talimatına uygun olarak.
+
 ## Sınırlılık: `13.13` ile karşılaştırılabilirlik (`ops_impl` moduna bağlı)
 
 Faz A'daki mevcut `fid50k_full=13.13` ölçümü, ORİJİNAL eğitim
@@ -326,23 +406,27 @@ tutarlılığı gibi) TAMAMLAYICI bir savunma katmanı olarak GEREKLİ. Bu
 ayrım makalenin "ZK'nın sınırlılıkları" bölümüne AÇIKÇA girmeli —
 ZK'yı olduğundan güçlü göstermemek adına.
 
-## Bekleyen veri (bu turda TAMAMLANAMADI — dosyaya erişim yok)
+## Bekleyen veri
 
-Bu oturumda `{zk_root}/attacks/attack_results.json`'a DOĞRUDAN erişim
-YOK (Colab/Drive'da duruyor, yerel makineye senkronize değil) —
-sadece konsol logundaki `||ΔG||`/`norm_caught` özeti paylaşıldı. ANA
-TABLO'nun FID/sınıf-tutarlılığı sütunlarını GERÇEK sayılarla
-doldurmak için şunlardan biri gerekiyor:
+`conditional_poison`'ın unprotected/protected sınıf-tutarlılığı
+ÖZETİ artık GERÇEK (yukarıdaki "takas GÖRÜNMÜYOR" bölümü) — ama şunlar
+HÂLÂ bekliyor:
 
-1. `attack_results.json` dosyasının TAMAMI (10 anahtar — `<saldırı>__<koşul>`),
-   ÖZELLİKLE her kaydın `class_confusion` alanı (`kid_matrix`,
-   `perceived_class`, `swap_detected`), YA DA
-2. En azından `conditional_poison__unprotected`/`conditional_poison__protected`
-   kayıtlarının `class_confusion` alanı — makalenin ana tezi için en
-   kritik olan bu ikisi.
+1. **H1 testinin sonucu**: `poisoned_alone` koşulunun
+   `conditional_poison__poisoned_alone` kaydının `class_confusion`
+   alanı — takas ORADA görünüyor mu? (kod yazıldı, Colab'da HENÜZ
+   koşulmadı).
+2. Diğer 4 saldırının (`random_weights`/`scaled_poison_*`) TAM
+   `class_confusion` matrisleri — bu saldırıların norm kontrolüyle
+   zaten yakalandığı biliniyor ama sınıf-tutarlılığı üzerindeki
+   yan etkileri (ör. görüntü kalitesi bu kadar bozulunca sınıf
+   ayrımı da rastgeleleşiyor mu) henüz görülmedi.
+3. 5×5 tam matrislerin TAMAMI (sadece DR-0/DR-4 satırları değil) — 
+   `swap_detected`'ın DR-2/DR-4'te neden `true` döndüğünü (uygulanan
+   takasla İLGİSİZ) anlamak için.
+4. (Madde 7'nin `--metrics-mode custom` koşumu ayrıca yapılırsa) FID
+   sütunu — `13.13` ile karşılaştırılamaz notuyla birlikte.
 
-Bu veri paylaşıldığında: ANA TABLO'nun FID/sınıf-tutarlılığı hücreleri
-GERÇEK sayılarla doldurulacak, `perceived_class[0]`/`perceived_class[4]`'ün
-GERÇEKTEN takas gösterip göstermediği KESİNLEŞTİRİLECEK, ve (madde
-7'nin `--metrics-mode custom` koşumu ayrıca yapılırsa) FID sütunu da
-(13.13 ile karşılaştırılamaz notuyla) eklenecek.
+`attack_results.json` dosyasının TAMAMI (ya da en azından
+`conditional_poison__poisoned_alone`'un `class_confusion` alanı)
+paylaşıldığında H1/H2/H3 kesinleştirilip rapor tamamlanacak.
