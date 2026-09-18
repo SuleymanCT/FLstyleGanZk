@@ -87,6 +87,46 @@ zorluyor (internal katman kodu `impl=` kwarg'ını hiç geçmiyor, hep
 küçük bir deneme üretimiyle CUDA'yı test edip BAŞARISIZ olursa
 UYARIYLA `ref`'e düşüyor; `ops_impl` alanı sonuç JSON'una kaydediliyor.
 
+### 5. `ref` modunda CUDA belleği tükendi — küçük batch + OOM-yeniden-deneme + CPU fallback
+
+`ref` moduna geçince BAŞKA bir sorun ortaya çıktı: `upfirdn2d._upfirdn2d_ref`
+içindeki `F.pad`, StyleGAN3-r'ın geniş filtreleriyle TEK bir görüntü
+için bile devasa bir ara tensör istedi (`13.37 GiB`, 39.49 GiB'lık
+GPU'da). Bu, CUDA'nın fused kernellerinin TEK bir işlemde yaptığını
+`ref` yolunun birden fazla büyük ara tensörle (unfused) yapmasının
+DOĞRUDAN sonucu — StyleGAN3'ün `ref` yolunun bilinen bir bellek
+maliyeti. Düzeltmeler:
+
+- **`--gen-batch-size`** (varsayılan: `ops_impl`'e göre otomatik —
+  `ref`→1, `cuda`→32) — görüntü üretim batch boyutunu kontrol eder.
+- **`eval.metrics.generate_class_images`** artık OOM'u (`is_cuda_oom_error`
+  — hem yeni `torch.cuda.OutOfMemoryError` hem eski `RuntimeError`
+  mesaj-tabanlı tespiti, PyTorch sürümü VARSAYILMIYOR) yakalayıp
+  `torch.cuda.empty_cache()`+`gc.collect()` sonrası batch boyutunu
+  YARIYA indirip AYNI chunk'ı yeniden dener (en fazla 4 kez); batch
+  1'de bile OOM olursa net bir hata + `--device cpu` önerisiyle durur
+  (sessizce yutulmaz). Üretim zaten `torch.no_grad()` içindeydi
+  (gradyan grafiği hiç tutulmuyor); her batch sonrası ara tensörler
+  `del` edilip GPU önbelleği boşaltılıyor.
+- **`PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`** (hata
+  mesajının önerdiği, bellek parçalanmasını azaltan ayar) `torch`
+  import edilmeden ÖNCE, script'in en başında ayarlanıyor.
+- **`--device {auto,cuda,cpu}`** — batch=1'de bile OOM olursa CPU
+  fallback'i (çok daha yavaş, ölçülüp `estimate_full_mode_cost` ile
+  raporlanıyor — `device=cpu`ysa StyleGAN-XL'in `impl` dallanması
+  zaten CPU tensöründe HER ZAMAN `ref` yoluna düştüğünden `resolve_ops_impl`
+  smoke-testi atlayıp doğrudan `ops_impl='ref'` döner).
+- **Değerlendirilen ama GEREKSİZ bulunan önlem:** "4 sitenin state_dict'i
+  + G_ema shell GPU'da mı duruyor" sorusu kod incelemesiyle netleştirildi
+  — `fl.stylegan_xl_env.load_network_pkl`/`legacy.load_network_pkl` hiçbir
+  `.cuda()` çağrısı YAPMIYOR, yüklenen state_dict'ler ve `g_ema_shell`
+  varsayılan olarak CPU'da kalıyor; `evaluate_condition` SADECE aktif
+  kullanılan `g_ema_shell`'i `.to(device)` ile GPU'ya taşıyor (TEK kopya,
+  koşullar arasında YENİDEN tahsis edilmiyor). Yani OOM'un kaynağı
+  BİRİKEN site ağırlık kopyaları DEĞİL, sadece `ref` yolunun TEK bir
+  ileri geçişteki ara tensör boyutuydu — bu yüzden "yükleme sonrası
+  CPU'ya taşı" için EK bir kod değişikliği GEREKMEDİ (zaten öyleydi).
+
 ## Yöntem
 
 1. `scripts/run_attacks.py`, `--round`'un 4 site'ının GERÇEK

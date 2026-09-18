@@ -1183,6 +1183,33 @@ not düşüldü. 6 yeni saf test (`_force_kwarg_wrapper`×3,
 `estimate_full_mode_cost`×3) yerelde doğrulandı. Tam paket: 340
 passed, 2 skipped.
 
+**3. Colab koşumu — `ref` moduna geçince CUDA belleği tükendi
+(`upfirdn2d._upfirdn2d_ref`'in `F.pad`'i TEK görüntü için 13.37 GiB
+istedi, 39.49 GiB'lık GPU'da):** StyleGAN3-r'ın geniş filtreleriyle
+`ref` yolunun (unfused) TEK bir ileri geçişte bile devasa ara tensör
+üretmesi — CUDA'nın fused kernellerinin TEK işlemde yaptığını `ref`
+birden fazla büyük tensörle yapıyor. Düzeltmeler: `--gen-batch-size`
+(varsayılan `ops_impl`'e göre otomatik, `ref`→1/`cuda`→32);
+`eval.metrics.generate_class_images` artık OOM'u (`is_cuda_oom_error`
+— yeni `torch.cuda.OutOfMemoryError` + eski `RuntimeError` mesaj
+tabanlı, PyTorch sürümü varsayılmıyor) yakalayıp batch boyutunu
+YARIYA indirip yeniden deniyor (4 kez), batch 1'de bile OOM olursa
+net hata + `--device cpu` önerisiyle duruyor; her batch sonrası
+`del`+`gc.collect()`+`torch.cuda.empty_cache()`; üretim zaten
+`torch.no_grad()` içindeydi. `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
+`torch` import edilmeden ÖNCE ayarlanıyor. `--device {auto,cuda,cpu}`
+eklendi — `cpu`ysa `resolve_ops_impl` smoke-testi atlayıp doğrudan
+`ops_impl='ref'` dönüyor (StyleGAN-XL'in `impl` dallanması CPU
+tensöründe zaten HER ZAMAN ref yoluna düşüyor), CPU süresi de
+`estimate_full_mode_cost` ile raporlanıyor. **Değerlendirilip GEREKSİZ
+bulunan önlem:** "4 site + shell GPU'da mı duruyor" sorusu kod
+incelemesiyle netleştirildi — `load_network_pkl` hiç `.cuda()`
+çağırmıyor, ağırlıklar zaten CPU'da; OOM'un kaynağı BİRİKEN kopyalar
+DEĞİL, `ref` yolunun TEK geçişteki ara tensör boyutuydu — ek bir
+"CPU'ya taşı" değişikliği GEREKMEDİ. 9 yeni saf test
+(`is_cuda_oom_error`×4, `pick_default_gen_batch_size`×3, CLI×2)
+yerelde doğrulandı. Tam paket: 349 passed, 2 skipped.
+
 **Kabul (İKİ ayrı madde):**
 1. Saldırı × koruma matrisi (bu bölüm) — **HENÜZ KARŞILANMADI**, Colab
    koşumu bekleniyor.

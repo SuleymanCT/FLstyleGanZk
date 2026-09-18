@@ -66,22 +66,44 @@ geçilmez. Sonuç JSON'unda hangi modun kullanıldığı `ops_impl` alanında
 kayıtlıdır. `ref` modunda ilk koşuldan sonra `--metrics-mode full`'un
 tahmini maliyeti (saat cinsinden) otomatik loglanır.
 
+## CUDA bellek yetersizliği (`--gen-batch-size`, `--device cpu`)
+
+`impl='ref'` moduna düşüldüğünde `upfirdn2d`'nin saf PyTorch yolu
+StyleGAN3-r'ın geniş filtreleriyle TEK bir görüntü için bile onlarca
+GB'lık ara tensör üretebiliyor (gerçek Colab koşumunda gözlendi:
+`F.pad`'de 13.37 GiB tek seferlik istek). `--gen-batch-size` görüntü
+üretim batch boyutunu elle ayarlar (varsayılan: `ops_impl`'e göre
+otomatik — `ref` için 1, `cuda` için 32); `eval.metrics.generate_class_images`
+OOM'da batch boyutunu KENDİLİĞİNDEN yarıya indirip yeniden dener,
+batch 1'de bile OOM olursa net bir hata + `--device cpu` önerisiyle
+durur. `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` (hata
+mesajının önerdiği, bellek parçalanmasını azaltan ayar) `torch`
+import edilmeden ÖNCE burada ayarlanıyor.
+
 Kullanım (Colab'da):
     python -m scripts.run_attacks --env colab --round 10 --metrics-mode quick   # önce ucuz sağlama
     python -m scripts.run_attacks --env colab --round 10 --metrics-mode full    # resmi fid50k_full/kid50k_full
     python -m scripts.run_attacks --env colab --round 10 --ops-impl ref         # CUDA derlemesini hiç deneme, doğrudan ref
+    python -m scripts.run_attacks --env colab --round 10 --device cpu          # GPU'da batch=1 bile OOM verirse
 """
 
 from __future__ import annotations
 
-import argparse
-import gc
 import os
-import time
 
-import torch
+# torch import edilmeden ÖNCE ayarlanmalı (CUDA ayırıcısı ilk tahsiste
+# bu değeri okuyor) — hata mesajının önerdiği, bellek parçalanmasını
+# azaltan ayar. Kullanıcı zaten farklı bir değer ayarladıysa (ör.
+# notebook'ta elle) EZİLMEZ (`setdefault`).
+os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
-from attacks.conditional_poison import DEFAULT_EMBED_KEY, swap_embed_rows
+import argparse  # noqa: E402 - PYTORCH_CUDA_ALLOC_CONF ayarından SONRA olmalı
+import gc  # noqa: E402
+import time  # noqa: E402
+
+import torch  # noqa: E402
+
+from attacks.conditional_poison import DEFAULT_EMBED_KEY, swap_embed_rows  # noqa: E402
 from attacks.detection import attack_touches_zk_proven_scope, verify_commitment_consistency
 from attacks.random_weights import randomize_state_dict
 from attacks.scaled_poison import scale_delta
@@ -107,6 +129,14 @@ CONDITIONS = ("unprotected", "protected")
 FULL_CLASS_IMAGES_PER_CLASS = 200
 QUICK_CLASS_IMAGES_PER_CLASS = 20
 
+# ops_impl'e göre varsayılan görüntü üretim batch boyutu — 'ref' modunda
+# StyleGAN3-r'ın geniş filtreleriyle upfirdn2d'nin saf PyTorch yolu TEK
+# bir görüntü için bile devasa ara tensör üretebiliyor (gerçek Colab
+# koşumunda gözlendi: F.pad'de 13.37 GiB), bu yüzden 'ref' için EN
+# KÜÇÜK (1) batch varsayılan; 'cuda' fused kernel kullandığından daha
+# büyük batch güvenli.
+DEFAULT_GEN_BATCH_SIZE_BY_OPS_IMPL = {"cuda": 32, "ref": 1}
+
 
 # ---------------------------------------------------------------------------
 # Saf yardımcılar (StyleGAN-XL/GPU GEREKTİRMEZ)
@@ -115,6 +145,15 @@ QUICK_CLASS_IMAGES_PER_CLASS = 20
 
 def result_key(attack_name: str, condition: str) -> str:
     return f"{attack_name}__{condition}"
+
+
+def pick_default_gen_batch_size(ops_impl: str) -> int:
+    """`--gen-batch-size` elle verilmediğinde `ops_impl`'e göre GÜVENLİ
+    bir varsayılan seçer — `ref` için 1 (bkz. `DEFAULT_GEN_BATCH_SIZE_BY_OPS_IMPL`
+    docstring'i), `cuda` için 32."""
+    if ops_impl not in DEFAULT_GEN_BATCH_SIZE_BY_OPS_IMPL:
+        raise ValueError(f"Bilinmeyen ops_impl: {ops_impl!r} (geçerli: {sorted(DEFAULT_GEN_BATCH_SIZE_BY_OPS_IMPL)})")
+    return DEFAULT_GEN_BATCH_SIZE_BY_OPS_IMPL[ops_impl]
 
 
 def resolve_training_options_path(raw_root: str, round_id: int, site_id: int) -> str:
@@ -214,8 +253,17 @@ def resolve_ops_impl(ops_impl_arg: str, *, g_ema, z_dim: int, c_dim: int, device
     `ref`'e DÜŞER. Bu düşüş SESSİZCE geçilmez, net bir UYARI basılır
     (kullanıcının açık isteği) — `--ops-impl auto` ile hangi ortamda
     çalıştığı ÖNCEDEN bilinmeden de doğru moda GERÇEKTEN karar
-    verilir, varsayılmaz."""
+    verilir, varsayılmaz. `device.type == "cpu"` ise smoke-test HİÇ
+    yapılmaz — StyleGAN-XL'in kendi `impl` dallanması
+    (`if impl=='cuda' and x.device.type=='cuda' and _init(): ...`,
+    WebFetch ile doğrulandı) zaten CPU tensörlerinde `impl` DEĞERİNDEN
+    BAĞIMSIZ olarak ref yoluna düşüyor — `ops_impl='ref'` DOĞRUDAN
+    döndürülür (test etmeye gerek yok, sonuç zaten kesin)."""
     from eval.metrics import force_stylegan_ops_impl, generate_class_images
+
+    if device.type == "cpu":
+        print("[run_attacks] device=cpu: CUDA custom op'ları CPU tensörlerinde zaten devre dışı — ops_impl='ref' (smoke-test atlandı).")
+        return "ref"
 
     if ops_impl_arg in ("cuda", "ref"):
         force_stylegan_ops_impl(ops_impl_arg)
@@ -246,6 +294,7 @@ def evaluate_condition(
     dataset_root_override: str | None,
     metrics_mode: str,
     device,
+    gen_batch_size: int,
 ) -> dict:
     """Bir (saldırı,koşul) çiftinin GERÇEK global ağırlığını `g_ema_shell`'e
     yükleyip FID/KID (`--metrics-mode full`) + sınıf-tutarlılığı
@@ -274,7 +323,7 @@ def evaluate_condition(
     t_confusion = time.perf_counter()
     confusion = class_confusion_matrix(
         g_ema_shell, dataset_kwargs=metric_options["dataset_kwargs"], num_classes=DR_NUM_CLASSES,
-        z_dim=dims["z_dim"], device=device, num_images_per_class=num_images_per_class,
+        z_dim=dims["z_dim"], device=device, num_images_per_class=num_images_per_class, batch_size=gen_batch_size,
     )
     result["class_confusion"] = confusion
     result["class_confusion_seconds"] = time.perf_counter() - t_confusion
@@ -310,6 +359,16 @@ def parse_args(argv=None) -> argparse.Namespace:
         help="StyleGAN-XL custom op'ları (bias_act/upfirdn2d/filtered_lrelu). 'auto' (varsayılan): CUDA'yı dener, "
              "derleme başarısızsa UYARIYLA 'ref'e düşer. 'cuda'/'ref': doğrudan zorla.",
     )
+    parser.add_argument(
+        "--device", default="auto", choices=["auto", "cuda", "cpu"],
+        help="'auto' (varsayılan): CUDA varsa kullan. 'cpu': GPU'da batch=1 bile CUDA OOM verirse fallback "
+             "(çok daha yavaş — süre ölçülüp loglanır).",
+    )
+    parser.add_argument(
+        "--gen-batch-size", type=int, default=None,
+        help="Görüntü üretim batch boyutu. Varsayılan: ops_impl'e göre otomatik (ref=1, cuda=32) — "
+             "bkz. DEFAULT_GEN_BATCH_SIZE_BY_OPS_IMPL.",
+    )
     return parser.parse_args(argv)
 
 
@@ -338,7 +397,10 @@ def main(argv=None) -> int:
 
     print(f"[run_attacks] round={args.round} poisoned_site={args.poisoned_site} attacks={attack_names} metrics_mode={args.metrics_mode}")
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if args.device == "auto":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(args.device)
     print(f"[run_attacks] device={device}")
 
     print("[run_attacks] Gerçek site state_dict'leri yükleniyor (Faz A checkpoint'leri, salt okunur)...")
@@ -359,7 +421,8 @@ def main(argv=None) -> int:
     print(f"[run_attacks] Boyutlar: {dims}")
 
     ops_impl_used = resolve_ops_impl(args.ops_impl, g_ema=g_ema_shell, z_dim=dims["z_dim"], c_dim=dims["c_dim"], device=device)
-    print(f"[run_attacks] ops_impl={ops_impl_used}")
+    gen_batch_size = args.gen_batch_size or pick_default_gen_batch_size(ops_impl_used)
+    print(f"[run_attacks] ops_impl={ops_impl_used} gen_batch_size={gen_batch_size}")
     extrapolation_logged = False
 
     training_options_path = resolve_training_options_path(paths["raw_root"], args.round, 0)
@@ -401,13 +464,15 @@ def main(argv=None) -> int:
             metrics_result = evaluate_condition(
                 global_state=aggregation["global_state"], g_ema_shell=g_ema_shell, dims=dims,
                 metric_options=metric_options, dataset_root_override=args.dataset_root,
-                metrics_mode=args.metrics_mode, device=device,
+                metrics_mode=args.metrics_mode, device=device, gen_batch_size=gen_batch_size,
             )
 
             all_results[key] = {
                 "attack": attack_name,
                 "condition": condition,
                 "ops_impl": ops_impl_used,
+                "device": str(device),
+                "gen_batch_size": gen_batch_size,
                 "poisoned_site_included": poisoned_included,
                 "delta_norm": delta_norm,
                 "norm_caught": norm_caught,
@@ -423,11 +488,11 @@ def main(argv=None) -> int:
                 extrapolation_logged = True
                 confusion = metrics_result["class_confusion"]
                 seconds_per_image = confusion["generation_seconds"] / confusion["num_generated_images"]
-                print(f"[run_attacks] Üretim hızı ({ops_impl_used}): {seconds_per_image:.3f}s/görüntü ({confusion['num_generated_images']} görüntü, {confusion['generation_seconds']:.1f}s).")
-                if ops_impl_used == "ref":
+                print(f"[run_attacks] Üretim hızı (ops_impl={ops_impl_used}, device={device}): {seconds_per_image:.3f}s/görüntü ({confusion['num_generated_images']} görüntü, {confusion['generation_seconds']:.1f}s).")
+                if ops_impl_used == "ref" or device.type == "cpu":
                     cost = estimate_full_mode_cost(seconds_per_image, num_conditions=len(attack_names) * len(CONDITIONS))
                     print(
-                        f"[run_attacks] UYARI: 'ref' modunda --metrics-mode full tahmini maliyet: "
+                        f"[run_attacks] UYARI: '{ops_impl_used}'/{device} modunda --metrics-mode full tahmini maliyet: "
                         f"koşul başına ~{cost['hours_per_condition']:.1f} saat, "
                         f"TOPLAM ({cost['num_conditions']} koşul) ~{cost['hours_total']:.1f} saat "
                         f"(SADECE görüntü üretimi — Inception özellik çıkarımı/KID hesaplaması HARİÇ, ek zaman gerektirir). "

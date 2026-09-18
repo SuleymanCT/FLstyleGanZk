@@ -14,6 +14,7 @@ from eval.metrics import (
     _force_kwarg_wrapper,
     build_fixed_class_batch,
     compute_kid_from_features,
+    is_cuda_oom_error,
     load_metric_options_from_training_options,
     to_uint8_images,
 )
@@ -181,3 +182,31 @@ def test_force_kwarg_wrapper_passes_through_other_args_and_kwargs_unchanged():
 
     wrapped = _force_kwarg_wrapper(original, "impl", "ref")
     assert wrapped(3, y=4) == (3, 4, "ref")
+
+
+# --- is_cuda_oom_error ---
+# Faz F'nin gerçek Colab koşumunda 'ref' modunda upfirdn2d._upfirdn2d_ref
+# icindeki F.pad 13.37 GiB istedi ve torch.OutOfMemoryError firlatti -
+# generate_class_images bu hatayi yakalayip batch boyutunu yariya
+# indirip yeniden deniyor, bunun icin hangi hatanin GERCEKTEN bir OOM
+# oldugunu (PyTorch surumune gore iki farkli sekilde gelebiliyor)
+# guvenilir sekilde tespit etmesi gerekiyor.
+
+
+def test_is_cuda_oom_error_true_for_message_containing_out_of_memory():
+    assert is_cuda_oom_error(RuntimeError("CUDA out of memory. Tried to allocate 13.37 GiB")) is True
+
+
+def test_is_cuda_oom_error_false_for_unrelated_runtime_error():
+    assert is_cuda_oom_error(RuntimeError("size mismatch")) is False
+
+
+def test_is_cuda_oom_error_false_for_unrelated_exception_type():
+    assert is_cuda_oom_error(ValueError("out of memory")) is False
+
+
+def test_is_cuda_oom_error_true_for_real_torch_oom_error_class_if_available():
+    oom_cls = getattr(torch.cuda, "OutOfMemoryError", None)
+    if oom_cls is None:
+        pytest.skip("bu PyTorch sürümünde torch.cuda.OutOfMemoryError yok")
+    assert is_cuda_oom_error(oom_cls("unrelated message")) is True

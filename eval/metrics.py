@@ -29,12 +29,14 @@ ve gerçek APTOS/DR veri kümesi gerektiren fonksiyonlar (`run_official_metric`,
 `collect_real_class_images`, `class_confusion_matrix`) SADECE Colab'da
 çalışır/test edilir. Saf/dosya-tabanlı yardımcılar
 (`load_metric_options_from_training_options`, `compute_kid_from_features`,
-`build_fixed_class_batch`, `to_uint8_images`) `tests/test_metrics.py`'de
-yerelde GERÇEKTEN test edilir.
+`build_fixed_class_batch`, `to_uint8_images`, `is_cuda_oom_error`,
+`_force_kwarg_wrapper`) `tests/test_metrics.py`'de yerelde GERÇEKTEN
+test edilir.
 """
 
 from __future__ import annotations
 
+import gc
 import inspect
 import json
 import os
@@ -274,15 +276,44 @@ def extract_features(detector, images_uint8: torch.Tensor, device, batch_size: i
     return np.concatenate(features, axis=0)
 
 
+DEFAULT_OOM_MAX_RETRIES = 4
+
+
+def is_cuda_oom_error(exc: BaseException) -> bool:
+    """`torch.cuda.OutOfMemoryError` (yeni PyTorch sürümlerinde) VEYA
+    mesajında "out of memory" geçen bir `RuntimeError` (eski sürümlerde
+    OOM hep düz `RuntimeError` olarak geliyordu) — hangi PyTorch
+    sürümünün Colab'da kurulu olduğu VARSAYILMAZ, ikisi de kontrol
+    edilir. Saf/testable: gerçek CUDA gerekmez, sentetik exception'larla
+    test edilir."""
+    oom_cls = getattr(torch.cuda, "OutOfMemoryError", None)
+    if oom_cls is not None and isinstance(exc, oom_cls):
+        return True
+    return isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
+
+
 def generate_class_images(
-    g_ema, *, class_index: int, c_dim: int, z_dim: int, num_images: int, device, batch_size: int = 32, seed: int = 0
+    g_ema, *, class_index: int, c_dim: int, z_dim: int, num_images: int, device, batch_size: int = 32, seed: int = 0,
+    max_oom_retries: int = DEFAULT_OOM_MAX_RETRIES,
 ) -> torch.Tensor:
     """`class_index`'e sabitlenmiş `num_images` görüntü üretir.
     `g_ema.forward`'ın gerçek imzası `inspect.signature` ile kontrol
     edilir (Faz C0'daki desenin aynısı) — `noise_mode` parametresi
     VARSA `"const"` geçilir (deterministik üretim için), YOKSA
     varsayılan davranışa güvenilip UYARI basılır (varsayımda
-    bulunulmaz)."""
+    bulunulmaz).
+
+    **CUDA OOM'a karşı dayanıklılık** (`impl='ref'` — StyleGAN3-r'ın
+    geniş filtreleriyle `upfirdn2d`'nin referans `F.pad` yolu TEK bir
+    görüntü için bile onlarca GB'lık ara tensör üretebiliyor, gerçek
+    Colab koşumunda gözlendi): bir batch OOM ile başarısız olursa
+    `torch.cuda.empty_cache()` + `gc.collect()` sonrası batch boyutu
+    YARIYA indirilip AYNI chunk yeniden denenir (`max_oom_retries`'e
+    kadar). Batch boyutu 1'e inip YİNE OOM olursa net bir hata verilir
+    (sessizce yutulmaz) — `scripts/run_attacks.py`'nin çağıranı bunu
+    `--device cpu` önerisiyle yakalıyor. Üretim `torch.no_grad()` içinde
+    yapılır (gradyan grafiği TUTULMAZ, gereksiz bellek şişmesi önlenir);
+    her batch sonrası ara tensörler `del` edilip GPU önbelleği boşaltılır."""
     forward_params = inspect.signature(g_ema.forward).parameters
     extra_kwargs: dict = {}
     if "noise_mode" in forward_params:
@@ -293,13 +324,45 @@ def generate_class_images(
     generator = torch.Generator().manual_seed(seed)
     chunks = []
     remaining = num_images
-    with torch.no_grad():
-        while remaining > 0:
-            b = min(batch_size, remaining)
-            z, c = build_fixed_class_batch(b, class_index, z_dim, c_dim, generator=generator)
-            img = g_ema(z.to(device), c.to(device), **extra_kwargs)
-            chunks.append(to_uint8_images(img).cpu())
-            remaining -= b
+    current_batch_size = max(1, batch_size)
+
+    while remaining > 0:
+        b = min(current_batch_size, remaining)
+        attempt = 0
+        while True:
+            try:
+                with torch.no_grad():
+                    z, c = build_fixed_class_batch(b, class_index, z_dim, c_dim, generator=generator)
+                    img = g_ema(z.to(device), c.to(device), **extra_kwargs)
+                    chunk = to_uint8_images(img).cpu()
+                del z, c, img
+                break
+            except Exception as e:  # noqa: BLE001 - OOM DIŞINDAKİ hatalar hemen yükseltilir, aşağıda kontrol edilir
+                if not is_cuda_oom_error(e):
+                    raise
+                attempt += 1
+                if device.type == "cuda":
+                    torch.cuda.empty_cache()
+                gc.collect()
+                if b <= 1 or attempt >= max_oom_retries:
+                    raise RuntimeError(
+                        f"[eval.metrics] CUDA belleği yetersiz (batch_size={b}, deneme {attempt}/{max_oom_retries}) — "
+                        f"'ref' modunda StyleGAN3'ün upfirdn2d referans yolu TEK bir görüntü için bile devasa ara "
+                        f"tensörler üretebiliyor. Öneri: '--device cpu' ile yeniden dene (çok daha yavaş ama "
+                        f"çalışır) — GPU'da başka bir küçültme kalmadı. Orijinal hata: {type(e).__name__}: {e}"
+                    ) from e
+                new_b = max(1, b // 2)
+                print(f"[eval.metrics] UYARI: CUDA OOM (deneme {attempt}/{max_oom_retries}) — batch_size {b} -> {new_b} düşürülüp yeniden deneniyor.")
+                b = new_b
+
+        chunks.append(chunk)
+        remaining -= chunk.shape[0]
+        current_batch_size = b  # sonraki chunk'lar da küçültülmüş boyutla başlasın
+        del chunk
+        gc.collect()
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
     return torch.cat(chunks, dim=0)
 
 

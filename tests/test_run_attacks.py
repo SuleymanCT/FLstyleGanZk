@@ -9,7 +9,15 @@ import os
 import pytest
 import torch
 
-from scripts.run_attacks import ATTACK_NAMES, apply_attack, estimate_full_mode_cost, resolve_training_options_path, result_key
+from scripts.run_attacks import (
+    ATTACK_NAMES,
+    apply_attack,
+    estimate_full_mode_cost,
+    parse_args,
+    pick_default_gen_batch_size,
+    resolve_training_options_path,
+    result_key,
+)
 
 
 def _synthetic_site_and_prev():
@@ -125,3 +133,37 @@ def test_estimate_full_mode_cost_raises_on_non_positive_input():
         estimate_full_mode_cost(0.0)
     with pytest.raises(ValueError, match="pozitif"):
         estimate_full_mode_cost(-1.0)
+
+
+# --- pick_default_gen_batch_size ---
+# Faz F'nin gerçek Colab koşumunda 'ref' modunda upfirdn2d'nin saf
+# PyTorch yolu TEK bir görüntü için bile CUDA OOM verdi (13.37 GiB) -
+# bu yüzden 'ref' için varsayılan batch boyutu KÜÇÜK olmalı.
+
+
+def test_pick_default_gen_batch_size_ref_is_small():
+    assert pick_default_gen_batch_size("ref") == 1
+
+
+def test_pick_default_gen_batch_size_cuda_is_larger():
+    assert pick_default_gen_batch_size("cuda") > pick_default_gen_batch_size("ref")
+
+
+def test_pick_default_gen_batch_size_raises_on_unknown_ops_impl():
+    with pytest.raises(ValueError, match="Bilinmeyen ops_impl"):
+        pick_default_gen_batch_size("not_a_real_impl")
+
+
+# --- --device / --gen-batch-size CLI argümanları ---
+
+
+def test_parse_args_device_defaults_to_auto():
+    args = parse_args([])
+    assert args.device == "auto"
+    assert args.gen_batch_size is None
+
+
+def test_parse_args_accepts_device_and_gen_batch_size_overrides():
+    args = parse_args(["--device", "cpu", "--gen-batch-size", "2"])
+    assert args.device == "cpu"
+    assert args.gen_batch_size == 2
