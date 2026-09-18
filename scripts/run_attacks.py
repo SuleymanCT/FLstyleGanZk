@@ -276,9 +276,10 @@ def main(argv=None) -> int:
 
     print("[run_attacks] G_ema 'shell' modülü yükleniyor (state_dict'i her koşulda değiştirilecek)...")
     g_ema_shell = load_site_g_ema_module(paths["raw_root"], paths["stylegan_xl_repo"], args.round, 0)
-    dims = extract_known_attrs(g_ema_shell, names=("z_dim", "c_dim", "w_dim", "num_ws"))
-    if dims.get("bulunamadi"):
-        raise RuntimeError(f"G_ema üzerinde beklenen boyut alanları bulunamadı: {dims['bulunamadi']}")
+    dims_result = extract_known_attrs(g_ema_shell, names=("z_dim", "c_dim", "w_dim", "num_ws"))
+    if dims_result["bulunamadi"]:
+        raise RuntimeError(f"G_ema üzerinde beklenen boyut alanları bulunamadı: {dims_result['bulunamadi']}")
+    dims = dims_result["found"]
     if dims["c_dim"] != DR_NUM_CLASSES:
         raise RuntimeError(f"Beklenen c_dim={DR_NUM_CLASSES}, gerçek G_ema.c_dim={dims['c_dim']} — DR sınıf sayısı varsayımı YANLIŞ, sabitleri güncelle.")
     print(f"[run_attacks] Boyutlar: {dims}")

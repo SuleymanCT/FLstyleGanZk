@@ -1136,6 +1136,25 @@ sayılar Colab koşumundan SONRA doldurulacak.
 
 Tam paket: 333 passed, 2 skipped (önceki: 291).
 
+**1. Colab koşumu — `KeyError: 'c_dim'` ile çöktü:** `scripts/run_attacks.py`,
+`fl.module_tree.extract_known_attrs`'ın döndürdüğü İÇ İÇE
+`{"found": {...}, "bulunamadi": [...]}` şemasını DÜZ bir sözlükmüş
+gibi (`dims["c_dim"]`) okumuştu — `scripts/inventory.py`/
+`scripts/make_reference_outputs.py` ise doğru şekilde
+`dims["found"]["c_dim"]` kullanıyordu (grep ile TEK yanlış kullanım
+yerinin `run_attacks.py` olduğu doğrulandı). **Düzeltme:** `main()`
+artık `dims_result["bulunamadi"]` boş değilse net hata veriyor
+(`make_reference_outputs.py`'nin deseninin AYNISI), sonra
+`dims = dims_result["found"]` ile düz erişime geçiyor — kodun geri
+kalanı (`dims["z_dim"]`/`dims["c_dim"]`) DEĞİŞMEDİ, artık DOĞRU
+şemaya erişiyor. `tests/test_module_tree.py`'ye bu şemayı SÖZLEŞME
+olarak sabitleyen yeni bir test eklendi
+(`test_extract_known_attrs_return_schema_is_nested_not_flat` — üst
+seviyede SADECE `found`/`bulunamadi` anahtarları olduğunu, `z_dim`/
+`c_dim`'in düz erişimle bulunAMAYACAĞINI doğrular) — bu tür şema
+uyumsuzluklarının gelecekte yeniden ORTAYA ÇIKMASINI önlemek için.
+Tam paket: 334 passed, 2 skipped.
+
 **Kabul (İKİ ayrı madde):**
 1. Saldırı × koruma matrisi (bu bölüm) — **HENÜZ KARŞILANMADI**, Colab
    koşumu bekleniyor.

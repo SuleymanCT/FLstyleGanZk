@@ -43,3 +43,24 @@ def test_extract_known_attrs_reports_found_and_missing():
 
     assert result["found"] == {"z_dim": 8, "c_dim": 3, "w_dim": 8, "num_ws": 2}
     assert result["bulunamadi"] == ["does_not_exist"]
+
+
+def test_extract_known_attrs_return_schema_is_nested_not_flat():
+    """Sözleşme testi: `extract_known_attrs` HER ZAMAN
+    `{"found": {...}, "bulunamadi": [...]}` şeklinde İÇ İÇE bir
+    sözlük döner — DÜZ bir `{"z_dim": ..., "c_dim": ...}` sözlük
+    DEĞİL. `scripts/run_attacks.py` bunu `dims["c_dim"]` ile (düz
+    sözlük varsayarak) okuyup `KeyError: 'c_dim'` ile çökmüştü —
+    kök sebep tam bu şema varsayımıydı (bkz. `scripts/inventory.py`/
+    `scripts/make_reference_outputs.py`'nin doğru kullandığı
+    `dims["found"]["c_dim"]` deseni). Bu test, imza/varsayılanlar
+    değişse bile üst-seviye şemanın SABİT kaldığını garanti eder —
+    çağıranların düz erişim varsayımına DÜŞMESİNİ önler."""
+    net = FakeMappingNet()
+    result = extract_known_attrs(net)
+
+    assert set(result.keys()) == {"found", "bulunamadi"}
+    assert isinstance(result["found"], dict)
+    assert isinstance(result["bulunamadi"], list)
+    assert "z_dim" not in result
+    assert "c_dim" not in result
