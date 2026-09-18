@@ -192,6 +192,99 @@ def render_mode_comparison_table(totals_by_mode: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+# Faz E'nin ilk tam mod koşumunda anvil ÇÖKMESİ yaşandı (36 ispat sonrası
+# RPC yanıt vermez oldu, bkz. docs/phase_e_infra_notes.md) — ham veri
+# incelemesi bunun SADECE RPC'yi değil, AYNI makinede koşan ezkl'i de
+# (bellek baskısı/swap) yavaşlattığını ortaya çıkardı: setup+prove ~74s'den
+# ~260s'ye çıkmış (bkz. docs/phase_e_report.md, "Sistematik teşhis"
+# bölümü). `run_id` BUNDAN SONRAKİ koşumlar için `main()`'in başında
+# üretilip her sonuca yazılıyor — ama ESKİ kayıtlarda (bu koşumdan önce
+# üretilmiş) bu alan YOK. Bu yüzden geriye dönük sınıflandırma HER ZAMAN
+# `timings` üzerinden yapılır, `run_id`'nin varlığına bağlı DEĞİL.
+ENVIRONMENT_DEGRADED_THRESHOLD_SECONDS = 150.0
+
+
+def classify_environment_health(timings: dict) -> str:
+    """`setup+prove` toplamı `ENVIRONMENT_DEGRADED_THRESHOLD_SECONDS`'ı
+    aşıyorsa `"degraded"` (anvil'in bellek şişmesinin ezkl'i de
+    yavaşlattığı, GERÇEK ortam — uydurma bir etiket değil, ölçülen
+    veriden ayrıştırılıyor), aşmıyorsa `"healthy"`. `setup` VE `prove`
+    ikisi de yoksa (başarısız/eksik kayıt) `"unknown"` — sessizce
+    `"healthy"` SAYILMAZ, sınıflandırma için yeterli veri olmadığı
+    açıkça işaretlenir."""
+    setup = timings.get("setup")
+    prove = timings.get("prove")
+    if setup is None and prove is None:
+        return "unknown"
+    total = (setup or 0.0) + (prove or 0.0)
+    return "degraded" if total > ENVIRONMENT_DEGRADED_THRESHOLD_SECONDS else "healthy"
+
+
+def split_by_environment_health(results: dict) -> dict:
+    """Sonuçları `classify_environment_health`'e göre üçe ayırır
+    (`"healthy"`/`"degraded"`/`"unknown"`) — normalize tablo SADECE
+    `"healthy"` kısmı kullanır."""
+    buckets: dict = {"healthy": {}, "degraded": {}, "unknown": {}}
+    for key, r in results.items():
+        health = classify_environment_health(r.get("timings") or {})
+        buckets[health][key] = r
+    return buckets
+
+
+def compute_healthy_avg_ezkl_seconds(results: dict) -> float | None:
+    """SADECE başarılı VE `"healthy"` ortamda ölçülmüş ispatların ezkl
+    süresi ortalaması — normalize tablonun "ispat başına sabit süre"
+    varsayımının GERÇEK, ÖLÇÜLMÜŞ değeri (74s'yi VARSAYMAZ, mevcut
+    healthy verilerden HESAPLAR). Hiç healthy+success kayıt yoksa
+    `None` döner — çağıran taraf bunu "normalize edilemiyor" olarak
+    ele almalı, 74 gibi sabit bir sayı UYDURMAMALI."""
+    healthy = split_by_environment_health(results)["healthy"]
+    successful = [r for r in healthy.values() if r.get("status") == "success"]
+    if not successful:
+        return None
+    per_proof = [sum((r.get("timings") or {}).get(k) or 0.0 for k in EZKL_TIMING_KEYS) for r in successful]
+    return sum(per_proof) / len(per_proof)
+
+
+def render_normalized_comparison_table(totals_by_mode: dict, healthy_avg_ezkl_seconds: float) -> str:
+    """Ham toplamlar tablosundaki `total_ezkl_seconds`'ı, BOZUK ortamda
+    (anvil çökmesi sırasında) ölçülmüş ispatların şişirdiği toplam
+    yerine, `ispat_sayısı * healthy_avg_ezkl_seconds` ile YENİDEN
+    hesaplayıp gösterir. Gas sütunları DEĞİŞMEZ — deploy/verify gas'ı
+    makine bellek durumundan ETKİLENMEZ (sabit devre/verifier boyutuna
+    bağlı), bu yüzden normalizasyon SADECE süre tarafını düzeltir. İki
+    ayrı tasarruf sütunu (süre/gas) BİLEREK ayrı tutulur — normalize
+    edildikten sonra ikisinin YAKINSADIĞINI (ikisi de ~ispat sayısı
+    oranına eşit) GÖSTERMEK bu tablonun asıl amacı."""
+    headers = [
+        "mod", "ispat sayısı", "normalize ezkl süresi (s)", "toplam zincir maliyeti (gas)",
+        "süre tasarrufu % (normalize)", "gas tasarrufu %",
+    ]
+    lines = ["| " + " | ".join(headers) + " |", "|" + "|".join(["---"] * len(headers)) + "|"]
+    full_totals = totals_by_mode.get("full")
+    full_time = full_totals["num_proofs"] * healthy_avg_ezkl_seconds if full_totals else None
+    full_cost = full_totals.get("total_chain_cost_gas") if full_totals else None
+
+    for mode, totals in totals_by_mode.items():
+        normalized_ezkl_seconds = totals["num_proofs"] * healthy_avg_ezkl_seconds
+        cost = totals["total_chain_cost_gas"]
+        if mode == "full" or not full_time:
+            time_savings = "-"
+        else:
+            time_savings = f"{100.0 * (1 - normalized_ezkl_seconds / full_time):.1f}"
+        if mode == "full" or not full_cost:
+            gas_savings = "-"
+        else:
+            gas_savings = f"{100.0 * (1 - cost / full_cost):.1f}"
+        row = [
+            mode, str(totals["num_proofs"]), f"{normalized_ezkl_seconds:.1f}", str(cost),
+            time_savings, gas_savings,
+        ]
+        lines.append("| " + " | ".join(row) + " |")
+
+    return "\n".join(lines) + "\n"
+
+
 def render_staged_distribution(results: dict) -> str:
     """"staged" modda hangi round'da hangi site'ların GERÇEKTEN ispat
     ürettiğini gösteren tablo — takvimin fiilen nasıl dağıldığını
@@ -630,6 +723,16 @@ def main(argv=None) -> int:
     results_path = str(replay_dir / f"replay_results_{args.mode}.json")
     all_results = load_replay_results(results_path)
 
+    # Faz E'nin ilk tam mod koşumunda anvil ÇÖKMESİ yaşanmıştı (36 ispat
+    # sonrası) — ham veri incelemesi bunun ezkl'i de yavaşlattığını
+    # gösterdi (bkz. classify_environment_health docstring'i). `run_id`
+    # HER `main()` çağrısında YENİDEN üretilir (aynı process/oturum
+    # boyunca sabit) — bu sayede "hangi kayıt HANGİ Colab koşumundan
+    # geldiği" ARTIK her yeni sonuca yazılıyor; ESKİ kayıtlarda yok,
+    # onlar timings üzerinden (classify_environment_health) sınıflandırılır.
+    run_id = f"{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}_pid{os.getpid()}"
+    print(f"[replay_proofs] run_id={run_id}")
+
     reputations = {s: schedule_config["reputation_initial"] for s in sites}
     processed = 0
     infra_events: list = []  # her yeniden başlatma/sağlık-kontrolü olayının GERÇEK kaydı - raporda GİZLENMEZ
@@ -734,6 +837,7 @@ def main(argv=None) -> int:
                         "status": "failed",
                         "error_summary": "startRound iki denemede de başarısız oldu (anvil altyapı sorunu) — bu round'daki hiçbir site ispatlanamadı.",
                         "segment_index": segment["segment_index"],
+                        "run_id": run_id,
                     }
                 save_replay_results(all_results, results_path)
                 continue
@@ -779,6 +883,7 @@ def main(argv=None) -> int:
                             "status": "failed",
                             "error_summary": f"anvil yeniden başlatma sonrası startRound (resume) başarısız: {type(e).__name__}: {e}",
                             "segment_index": segment["segment_index"],
+                            "run_id": run_id,
                         }
                         save_replay_results(all_results, results_path)
                         continue
@@ -796,6 +901,7 @@ def main(argv=None) -> int:
                         "combo": {"round_id": round_id, "site_index": site_index},
                         "status": "failed",
                         "error_summary": f"submitUpdate/shard öncesi hazırlık başarısız: {type(e).__name__}: {e}",
+                        "run_id": run_id,
                     }
                     print(f"[replay_proofs] '{key}' BAŞARISIZ (submitUpdate öncesi): {result['error_summary']}")
                 else:
@@ -811,6 +917,7 @@ def main(argv=None) -> int:
                         reputations[site_index] = segment["round_manager_client"].get_reputation(site_address)
 
                 result["segment_index"] = segment["segment_index"]
+                result["run_id"] = run_id
                 all_results[key] = result
                 save_replay_results(all_results, results_path)
                 processed += 1
@@ -834,6 +941,7 @@ def main(argv=None) -> int:
 
     other_mode = "staged" if args.mode == "full" else "full"
     other_results_path = replay_dir / f"replay_results_{other_mode}.json"
+    other_results: dict = {}
     totals_by_mode = {args.mode: totals}
     if other_results_path.is_file():
         other_results = load_replay_results(str(other_results_path))
@@ -845,7 +953,42 @@ def main(argv=None) -> int:
     comparison_table = render_mode_comparison_table(ordered)
     print("\n" + comparison_table)
 
-    md_parts = [f"# Faz E — İspat Takvimi Maliyet Karşılaştırması\n\n", "## Mod karşılaştırma tablosu\n\n", comparison_table]
+    md_parts = [f"# Faz E — İspat Takvimi Maliyet Karşılaştırması\n\n", "## Mod karşılaştırma tablosu (ham toplamlar)\n\n", comparison_table]
+
+    # Ham toplamlar, anvil'in bellek şişmesi sırasında ölçülmüş (bkz.
+    # classify_environment_health) "degraded" ispatları İÇEREBİLİR —
+    # bu, özellikle tam mod koşusunda (ilk çöken koşum) toplam ezkl
+    # süresini şişirir. Normalize tablo SADECE "healthy" + başarılı
+    # ispatların GERÇEK ortalamasını kullanarak bu şişmeyi düzeltir
+    # (74s gibi bir sayı UYDURULMUYOR — mevcut healthy verilerden
+    # HESAPLANIYOR). Her iki modun BİRLEŞİK sonuçlarından hesaplanır —
+    # tek bir modun healthy örneklemi azsa diğer modun healthy verisiyle
+    # desteklenir.
+    combined_results_for_health = dict(all_results)
+    combined_results_for_health.update(other_results)
+    healthy_avg_ezkl_seconds = compute_healthy_avg_ezkl_seconds(combined_results_for_health)
+    health_buckets = split_by_environment_health(combined_results_for_health)
+    degraded_count, unknown_count = len(health_buckets["degraded"]), len(health_buckets["unknown"])
+
+    if healthy_avg_ezkl_seconds is not None:
+        print(
+            f"[replay_proofs] sağlıklı ortamda ölçülen ispat başına ortalama ezkl süresi: "
+            f"{healthy_avg_ezkl_seconds:.2f}s ({degraded_count} bozuk-ortam, {unknown_count} sınıflandırılamayan "
+            f"kayıt normalize tablodan HARİÇ tutuldu)"
+        )
+        normalized_table = render_normalized_comparison_table(ordered, healthy_avg_ezkl_seconds)
+        print("\n" + normalized_table)
+        md_parts += [
+            "\n## Normalize edilmiş karşılaştırma (sadece sağlıklı ortamda ölçülen ispatlar)\n\n",
+            f"Sağlıklı ortamda ölçülen ispat başına ortalama ezkl süresi: **{healthy_avg_ezkl_seconds:.2f}s** "
+            f"— {degraded_count} bozuk-ortam ({ENVIRONMENT_DEGRADED_THRESHOLD_SECONDS:.0f}s'yi aşan setup+prove, "
+            f"anvil'in bellek şişmesi sırasında ölçülmüş) ve {unknown_count} sınıflandırılamayan (başarısız/eksik "
+            f"timings) kayıt bu ortalamadan HARİÇ tutuldu — bkz. `docs/phase_e_report.md`.\n\n",
+            normalized_table,
+        ]
+    else:
+        print("[replay_proofs] UYARI: hiç 'healthy' ortamda ölçülmüş başarılı ispat yok — normalize tablo ÜRETİLEMİYOR.")
+        md_parts += ["\n## Normalize edilmiş karşılaştırma\n\n", "Hiç 'healthy' ortamda ölçülmüş başarılı ispat yok — normalize tablo üretilemedi.\n"]
     if "staged" in totals_by_mode:
         staged_results = all_results if args.mode == "staged" else load_replay_results(str(replay_dir / "replay_results_staged.json"))
         md_parts += ["\n## \"staged\" modda round başına ispat dağılımı\n\n", render_staged_distribution(staged_results)]

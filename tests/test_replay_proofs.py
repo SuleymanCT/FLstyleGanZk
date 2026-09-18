@@ -11,7 +11,10 @@ dallarında, çağrıldıklarında), bu yüzden bu dosya yerelde sorunsuz
 import pytest
 
 from scripts.replay_proofs import (
+    ENVIRONMENT_DEGRADED_THRESHOLD_SECONDS,
     check_rpc_alive,
+    classify_environment_health,
+    compute_healthy_avg_ezkl_seconds,
     compute_mode_totals,
     get_replay_infra_config,
     parse_args,
@@ -19,10 +22,12 @@ from scripts.replay_proofs import (
     render_failure_summary,
     render_infra_events,
     render_mode_comparison_table,
+    render_normalized_comparison_table,
     render_staged_distribution,
     replay_combo_key,
     round_fully_done,
     should_restart_segment,
+    split_by_environment_health,
     validate_args,
 )
 
@@ -292,3 +297,83 @@ def test_render_infra_events_lists_all_events_with_context():
     assert "Toplam 2 altyapı olayı" in summary
     assert "scheduled_restart" in summary and "before_round=3" in summary
     assert "unhealthy_before_proof" in summary and "round_id=9" in summary and "site_index=2" in summary
+
+
+# --- classify_environment_health / normalize tablo (Faz E'nin gerçek Colab
+# bulgusu: anvil'in bellek şişmesi ezkl'i de yavaşlattı, setup+prove
+# ~74s'den ~260s'ye çıktı — ham veriye bakılarak tespit edildi) ---
+
+
+def test_classify_environment_health_healthy_below_threshold():
+    assert classify_environment_health({"setup": 36.5, "prove": 37.3}) == "healthy"
+
+
+def test_classify_environment_health_degraded_above_threshold():
+    assert classify_environment_health({"setup": 120.0, "prove": 140.0}) == "degraded"
+
+
+def test_classify_environment_health_exactly_at_threshold_is_healthy():
+    # Eşik "aşan" (>) için degraded, eşitse (henüz aşmamış) healthy.
+    assert classify_environment_health({"setup": ENVIRONMENT_DEGRADED_THRESHOLD_SECONDS / 2, "prove": ENVIRONMENT_DEGRADED_THRESHOLD_SECONDS / 2}) == "healthy"
+
+
+def test_classify_environment_health_unknown_when_both_missing():
+    assert classify_environment_health({}) == "unknown"
+    assert classify_environment_health({"gen_settings": 0.5}) == "unknown"
+
+
+def test_classify_environment_health_handles_none_values():
+    # Faz E'nin gerçek 'crashed' kayıtlarında timings alanları None olabilir.
+    assert classify_environment_health({"setup": None, "prove": 200.0}) == "degraded"
+
+
+def test_split_by_environment_health_partitions_correctly():
+    results = {
+        "round0_site0": {"status": "success", "timings": {"setup": 36.0, "prove": 37.0}},
+        "round9_site0": {"status": "success", "timings": {"setup": 120.0, "prove": 140.0}},
+        "round9_site1": {"status": "failed", "timings": {}},
+    }
+    buckets = split_by_environment_health(results)
+    assert set(buckets["healthy"]) == {"round0_site0"}
+    assert set(buckets["degraded"]) == {"round9_site0"}
+    assert set(buckets["unknown"]) == {"round9_site1"}
+
+
+def test_compute_healthy_avg_ezkl_seconds_only_uses_healthy_success():
+    results = {
+        "a": {"status": "success", "timings": {"setup": 36.0, "prove": 37.0, "gen_settings": 1.0}},
+        "b": {"status": "success", "timings": {"setup": 40.0, "prove": 39.0, "gen_settings": 1.0}},
+        # degraded - ORTALAMAYA GİRMEMELİ
+        "c": {"status": "success", "timings": {"setup": 130.0, "prove": 140.0, "gen_settings": 1.0}},
+        # başarısız - ORTALAMAYA GİRMEMELİ (healthy olsa bile)
+        "d": {"status": "failed", "timings": {"setup": 36.0, "prove": 37.0}},
+    }
+    avg = compute_healthy_avg_ezkl_seconds(results)
+    # a: 36+37+1=74, b: 40+39+1=80 -> ortalama 77.0
+    assert avg == pytest.approx(77.0)
+
+
+def test_compute_healthy_avg_ezkl_seconds_none_when_no_healthy_success():
+    results = {"a": {"status": "success", "timings": {"setup": 130.0, "prove": 140.0}}}
+    assert compute_healthy_avg_ezkl_seconds(results) is None
+
+
+def test_render_normalized_comparison_table_uses_constant_per_proof_time():
+    totals_by_mode = {
+        "full": {"num_proofs": 60, "total_chain_cost_gas": 269_939_688},
+        "staged": {"num_proofs": 21, "total_chain_cost_gas": 94_481_181},
+    }
+    table = render_normalized_comparison_table(totals_by_mode, healthy_avg_ezkl_seconds=77.7)
+    # full: 60*77.7=4662.0, staged: 21*77.7=1631.7
+    assert "4662.0" in table
+    assert "1631.7" in table
+    # sure tasarrufu artik ispat sayisi oranina esit olmali: 1-21/60=%65.0
+    lines = [l for l in table.splitlines() if l.startswith("| staged")]
+    assert len(lines) == 1
+    assert "65.0" in lines[0]
+
+
+def test_render_normalized_comparison_table_dash_when_full_missing():
+    totals_by_mode = {"staged": {"num_proofs": 21, "total_chain_cost_gas": 94_481_181}}
+    table = render_normalized_comparison_table(totals_by_mode, healthy_avg_ezkl_seconds=77.7)
+    assert "| staged | 21 | 1631.7 | 94481181 | - | - |" in table

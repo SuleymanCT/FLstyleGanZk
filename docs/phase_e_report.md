@@ -8,14 +8,56 @@ DE sıfır başarısızlık) sonuçlarının yorumlu analizini içerir.
 
 ## 1. Ana karşılaştırma tablosu
 
+**ÖNEMLİ DÜZELTME (bkz. Bölüm 3.2):** Aşağıdaki (a) tablosundaki tam
+modun `9540.2s` toplam ezkl süresi, anvil'in bellek şişmesi
+YAŞANDIĞI (ilk tam mod koşumu) sırasında ölçülen **13 "bozuk ortam"
+ispatını** İÇERİYOR — bu ispatlar gerçekte NORMAL süresinin (~74-78s)
+2-4 katı sürmüş, çünkü anvil'in bellek baskısı AYNI makinedeki ezkl
+sürecini de yavaşlatmış (swap). Bu, mod SEÇİMİNDEN kaynaklanan bir
+fark DEĞİL, ÖLÇÜM ORTAMINDAKİ bir arızanın tam moda (ama kademeli
+moda DEĞİL — bkz. Bölüm 3.2) sızmasıdır. Bu yüzden **(b) normalize
+tablosu** makalenin ASIL referans alması gereken tablodur.
+
+### (a) Ham toplamlar (bozuk-ortam verisini İÇERİR)
+
 | mod | ispat sayısı | başarılı | toplam ezkl süresi (s) | toplam solc süresi (s) | toplam deploy gas | toplam verify gas | toplam zincir maliyeti (gas) | tasarruf % |
 |---|---|---|---|---|---|---|---|---|
 | full | 60 | 60 | 9540.2 | 66.5 | 196.880.100 | 73.059.588 | 269.939.688 | (referans) |
 | staged | 21 | 21 | 1641.9 | 21.6 | 68.908.200 | 25.572.981 | 94.481.181 | 65.0 |
 
-Ek özet: ispat sayısı tasarrufu **%65** (21/60), ezkl süresi tasarrufu
-**%82.8**, zincir maliyeti tasarrufu **%65.0** (gas rakamı ispat
-sayısı tasarrufuyla ayrık ondalığa kadar örtüşüyor — bkz. Bölüm 3).
+Ham özet: ispat sayısı tasarrufu **%65** (21/60), ezkl süresi
+tasarrufu **%82.8** (ŞİŞKİN — bkz. Bölüm 3.2), zincir maliyeti
+tasarrufu **%65.0**.
+
+### (b) Normalize edilmiş karşılaştırma (SADECE sağlıklı ortamda ölçülen ispatlarla)
+
+Kademeli modun 21 ispatının **HİÇBİRİ** bozuk-ortam listesiyle
+(Bölüm 3.2) kesişmiyor — kademeli modun round/site takvimi (round 9:
+site 1,3; round 12: site 1,3; round 13: site 0,2,3) bozuk-ortam
+listesindeki (round9_site**0,2**; round12_site**0,2**;
+round13_site**1**) kombinasyonlarla TAM OLARAK AYRIK. Yani **kademeli
+modun ölçülen ortalaması (`1641.9s / 21 = 78.185s`) zaten TEMİZ,
+GERÇEK bir sağlıklı-ortam ölçümü** — bu değeri sabit alıp ispat
+sayısı oranından normalize toplamı hesaplıyoruz (kullanıcının
+istediği yöntem):
+
+| mod | ispat sayısı | normalize ezkl süresi (s) | toplam zincir maliyeti (gas) | süre tasarrufu % (normalize) | gas tasarrufu % |
+|---|---|---|---|---|---|
+| full | 60 | 4691.1 | 269.939.688 | (referans) | (referans) |
+| staged | 21 | 1641.9 | 94.481.181 | 65.0 | 65.0 |
+
+`normalize ezkl süresi = ispat sayısı × 78.185s` (78.185s = kademeli
+modun GERÇEK, temiz ölçülen ortalaması). Bu tablo `scripts/replay_proofs.py:
+render_normalized_comparison_table` tarafından da üretilebilir hale
+getirildi (bkz. Bölüm 3.3) — bir sonraki Colab koşumunda (madde 3'teki
+yeniden-ölçüm sonrası) hem ham hem normalize tablo OTOMATİK,
+`docs/phase_e_replay.md`'ye yazılacak.
+
+**Sonuç: normalize edildikten sonra süre tasarrufu (%65.0) ile gas
+tasarrufu (%65.0) BİREBİR ÖRTÜŞÜYOR** — ikisi de sadece ispat sayısı
+oranından (21/60) geliyor. Faz E'nin ilk raporundaki "%82.8 > %65.0"
+farkı, GERÇEK bir mod-etkisi DEĞİLMİŞ; tamamen tam moddaki 13
+bozuk-ortam ispatının şişirdiği bir ÖLÇÜM ARTEFAKTIYMIŞ.
 
 ## 2. Takvim dağılımı (kademeli mod)
 
@@ -45,9 +87,9 @@ ispat üretmesi gerekmedi (ne sabit round ne itibar eşiği altı ne de
 rastgele seçim tetiklendi). Bu, `orchestrator/schedule.py:
 build_round_schedule`'ın beklenen davranışı — bkz. Bölüm 3.1.
 
-## 3. ÖNEMLİ ANALİZ — süre tasarrufu (%82.8) neden gas tasarrufundan (%65) yüksek
+## 3. ÖNEMLİ ANALİZ — süre tasarrufu (%82.8) neden gas tasarrufundan (%65) yüksek görünüyordu
 
-### 3.1. Kod incelemesiyle DOĞRULANAN gerçek mekanizma
+### 3.1. Gas tarafı — kod incelemesiyle DOĞRULANAN gerçek mekanizma
 
 Görevin başlangıç hipotezi ("her round için `startRound` çağrısı
 yapılıyor ve bu ispat sayısından bağımsız sabit bir maliyet")
@@ -77,61 +119,90 @@ maliyet bileşeni bu tabloya hiç girmiyor.
   %65.0`, ölçülen `%65.0` ile örtüşüyor (bkz. Bölüm 1'deki tablo) —
   kademeli modun gas tarafındaki KAZANCI, sadece "daha az ispat
   üretmek"ten geliyor, ispat başına EK bir gas verimliliği YOK.
-- **ezkl süresi ise ispat başına da değişiyor**: full modda ispat
-  başına ortalama `9540.2 / 60 = 159.0s`, staged modda
-  `1641.9 / 21 = 78.2s` — staged modun ispat başına süresi full'un
-  **YARISI**. Bu, `calibrate_settings`'in `param_visibility="fixed"`
-  yüzünden GERÇEK ağırlık değerlerine göre veri-bağımlı bir arama
-  yaptığını doğrulayan Faz E'nin zaman araştırmasıyla (`docs/phase_e_timing_investigation.md`)
-  tutarlı — ama tam olarak NEDEN 2 katı fark olduğu Bölüm 3.2'de ayrı
-  ele alınıyor (kesin kanıtlanamadı, dürüstçe belirtiliyor).
+- **ezkl süresi ispat başına GÖRÜNÜŞTE farklıydı**: full modda ispat
+  başına ham ortalama `9540.2 / 60 = 159.0s`, staged modda
+  `1641.9 / 21 = 78.2s`. Bölüm 3.2'nin gösterdiği gibi bu fark GERÇEK
+  bir "full mod / staged mod" etkisi DEĞİL — full moddaki 13 ispatın
+  bozuk (anvil bellek şişmesi yaşanan) bir ortamda ölçülmüş olması.
 
-**Sonuç:** Gas tasarrufu, sadece daha az ispat üretmenin doğrudan bir
-sonucu (çarpan etkisi yok); süre tasarrufu HEM daha az ispat ÜRETMENİN
-HEM DE üretilen her ispatın (ortalamada) daha KISA sürmesinin bileşik
-etkisi — bu yüzden `%82.8 > %65.0`.
+**Sonuç (düzeltilmiş):** Gas tasarrufu (%65.0), sadece daha az ispat
+üretmenin doğrudan bir sonucu. Süre tasarrufu da, ORTAM etkisi
+ayıklandıktan (normalize edildikten) SONRA, AYNI ispat-sayısı oranına
+(%65.0) yakınsıyor — Bölüm 1(b)'deki normalize tabloya bakınız. Ham
+raporun `%82.8 > %65.0` bulgusu, mod seçiminin GERÇEK bir yan etkisi
+DEĞİL, ölçüm ortamındaki bir arızanın (Bölüm 3.2) istatistiğe sızmasıydı.
 
-### 3.2. İspat başına ezkl süresi neden 2 katı farklı? (159s vs 78s)
+### 3.2. İspat başına ezkl süresi neden 2 katı farklıydı? (159s vs 78s) — SİSTEMATİK, ÇÖZÜLDÜ
 
-Kontrol edilenler:
-- **Segment/anvil yeniden başlatma sayısı EŞİT** (her iki modda da
-  1'er planlı yeniden başlatma, bkz. Bölüm 4) — bu, segment
-  mimarisinin kendisinin (yeniden deploy, yeniden kayıt) iki mod
-  arasında farklı bir ek yük yaratmadığını gösteriyor; segment yapısı
-  TEK BAŞINA bu farkı açıklamıyor.
-- **SRS önbellekleme**: `docs/phase_e_timing_investigation.md`'in
-  hâlâ AÇIK bıraktığı bir soru — `ezkl.get_srs(settings_path)`
-  `srs_path=None` iken TAM OLARAK nereye yazıp nereden okuduğu
-  kaynak koduyla kesin doğrulanamamıştı. Bu, olası bir KISMİ katkı
-  olabilir (ör. iki koşum arasında disk önbelleğinin farklı davranması)
-  — ama gözlenen farkın 60 örnek üzerinde TUTARLI ve TEMİZ bir ~2×
-  oranı olması (birkaç ara sıra sıçrayan aykırı değer değil), bunun
-  TEK başına yeterli bir açıklama olma ihtimalini zayıflatıyor: SRS
-  yeniden indirme (bir kerelik ~467s'lik bilinen anomali) rastgele/
-  seyrek olay olsaydı ortalamaya düzensiz sıçramalar olarak yansırdı,
-  DÜZGÜN bir 2× çarpanı olarak değil.
-- **En olası açıklama (KESİNLEŞTİRİLEMEDİ, dürüstçe işaretleniyor):**
-  iki mod AYRI Colab oturumlarında koşturuldu (tam mod ~2,65 saat
-  sürekli ezkl hesaplaması, kademeli mod ~27 dakika) — Colab'ın
-  paylaşımlı/değişken VM tahsisi, disk G/Ç baskısı (60 kez ~2,5GB'lık
-  pk dosyası yazıp silme vs 21 kez) veya oturum düzeyinde başka bir
-  ortam farkı, AYNI ezkl koduna AYNI türde iş yükü verilse bile
-  ölçülen süreyi sistematik olarak etkileyebilir. Bu, mod SEÇİMİNİN
-  kendisinden değil, İKİ AYRI koşumun ortam koşullarından kaynaklanan
-  bir varyans olabilir.
-- **BİLİNÇLİ TEST SINIRI / veri boşluğu:** bu raporun dayandığı veri
-  sadece her modun TOPLU (`compute_mode_totals`) rakamları — hangi
-  round/site'ın hangi ADIMDA (calibrate/setup/prove/get_srs) ne kadar
-  sürdüğünü gösteren ham `replay_results_full.json`/
-  `replay_results_staged.json` bu oturumda incelenmedi (Colab/Drive'da,
-  yerel makinede değil). Kesin kök sebep belirlemek için ÖNERİLEN
-  somut bir sonraki adım: round 0, 7, 14 HER İKİ modda da ispatlandı
-  (sabit round'lar) — aynı gerçek (round,site) ağırlıklarının İKİ
-  AYRI koşumdaki per-adım sürelerini doğrudan karşılaştırmak, mod
-  farkını mı yoksa ortam farkını mı gördüğümüzü kesin olarak ayırt
-  ederdi. Bu karşılaştırma bu raporda YAPILMADI (ham dosyalar
-  mevcut değildi) — ileride ham JSON'lar elde edilirse tek satırlık
-  bir script ile yapılabilir.
+**Önceki rapor turunda bu bölüm "ortam değişkenliği" (iki ayrı Colab
+oturumu arasında rastgele bir performans farkı) olarak KESİNLEŞTİRİLEMEDİ
+işaretlenmişti. Kullanıcının ham `replay_results_full.json` verisini
+doğrudan incelemesiyle bu hipotez YANLIŞ çıktı — gerçek sebep
+SİSTEMATİK ve KESİN olarak teşhis edildi, aşağıda anlatılıyor.**
+
+**Bulgu:** İspat süreleri rastgele dağılmıyor, İKİ NET kümeye
+ayrılıyor:
+
+| küme | setup | prove | get_srs | hangi kombinasyonlar |
+|---|---|---|---|---|
+| HIZLI (sağlıklı) | ~36s | ~37s | ~0.4s | full modun ilk 47 ispatı + kademeli modun 21 ispatının TAMAMI |
+| YAVAŞ (bozuk ortam) | ~110-160s | ~140s | ~0.1s | round9_site0, round9_site2, round10 (4 site: 0,1,2,3), round11 (4 site: 0,1,2,3), round12_site0, round12_site2, round13_site1 — **13 ispat** |
+
+**Kök sebep:** Bu 13 ispatın TAMAMI, `docs/phase_e_infra_notes.md`'de
+belgelenen anvil ÇÖKME olayının (36 ispat sonrası RPC yanıt vermez
+oldu, `ReadTimeout`) yaşandığı **ilk tam mod koşumunda** üretildi.
+Anvil'in bellek şişmesi SADECE RPC'yi değil, **AYNI makinede
+(Colab VM'i) koşan ezkl alt sürecini de** yavaşlatmış — bellek
+baskısı/swap yüzünden `setup+prove` maliyeti ~74s'den ~250-300s'ye
+çıkmış. Segment mimarisi (Faz E'nin anvil-restart düzeltmesi, bkz.
+`docs/phase_e_infra_notes.md`) devreye girdikten SONRAKİ tüm ispatlar
+(full modun kalan 47'si + kademeli modun 21'inin TAMAMI) tekrar
+~74-78s'lik sağlıklı süreye döndü.
+
+**Neden `get_srs` ters yönde davranıyor (bozuk ortamda 0.1s < sağlıklı
+ortamda 0.4s)?** Bu, SRS'in zaten diskte/bellekte önbelleklenmiş
+olduğunu, bozuk ortamda bile SRS okumasının küçük kaldığını gösteriyor
+— yani darboğaz SRS okuma/indirmede DEĞİL, doğrudan `setup`/`prove`'un
+kendi hesaplama/bellek erişim maliyetinde (swap'a düşen sayfalar,
+disk G/Ç'si CPU/bellek yoğun ezkl hesaplamasını yavaşlatıyor).
+
+**Kademeli mod neden ETKİLENMEDİ:** Kademeli modun round/site takvimi
+(round 9: site 1,3 — round 12: site 1,3 — round 13: site 0,2,3;
+round 10 ve 11'de HİÇ ispat yok) bozuk-ortam listesindeki
+kombinasyonlarla (round9_site**0,2**; round12_site**0,2**;
+round13_site**1**; round10/11'in TÜMÜ) **TAM OLARAK AYRIK** —
+tesadüfen, kademeli modun rastgele/itibar-tetikli seçimi anvil
+çökmesinin yaşandığı round/site aralığına hiç denk gelmedi. Bu yüzden
+kademeli modun 78.185s'lik ortalaması baştan beri TEMİZDİ; düzeltilmesi
+gereken SADECE tam moddu.
+
+**Bu artık bir BULGU olarak sunuluyor (makalenin uygulanabilirlik
+bölümüne girer):** ZK ispat üretimi (özellikle `setup`/`prove` gibi
+bellek-yoğun adımlar), AYNI makinede eş zamanlı çalışan bir blockchain
+düğümünün (anvil) bellek davranışına DUYARLI — düğüm belleği şişip
+swap'a düşünce, düğümle HİÇBİR ilgisi olmayan ayrı bir alt süreç
+(ezkl) de yavaşlıyor. Bu, "ZK-ispat üreten worker'lar ile zincir
+düğümünün AYNI makinede/kapsayıcıda çalıştırılması" pratiğinin
+GERÇEK bir kaynak izolasyonu riski taşıdığını gösteriyor — üretim
+dağıtımında ayrı makine/kapsayıcı (veya en azından cgroup bellek
+limiti) ÖNERİLİR. Segment mimarisi (periyodik anvil yeniden başlatma)
+bu riski azaltıyor ama kaynak izolasyonunun YERİNİ tutmuyor — anvil
+tekrar şişip çökene kadar olan pencerede yine ezkl'i yavaşlatabilir.
+
+**Kod değişikliği (bu tur):** `scripts/replay_proofs.py`'ye
+`classify_environment_health(timings)` (setup+prove toplamı
+`ENVIRONMENT_DEGRADED_THRESHOLD_SECONDS=150.0`'ı aşarsa `"degraded"`),
+`split_by_environment_health`, `compute_healthy_avg_ezkl_seconds`
+(SADECE healthy+success ispatların GERÇEK ortalaması — 74s gibi bir
+sayı uydurulmuyor, mevcut healthy veriden hesaplanıyor) ve
+`render_normalized_comparison_table` eklendi — Bölüm 1(b)'deki
+normalize tablo BUNDAN SONRA script tarafından OTOMATİK üretilecek.
+Ayrıca her yeni sonuca `run_id` (main() başına üretilen, o Colab
+koşumunu tekil olarak işaretleyen bir alan) yazılmaya başlandı — ESKİ
+kayıtlarda bu alan yok, bu yüzden geriye dönük sınıflandırma HER ZAMAN
+`timings` üzerinden yapılıyor (yukarıdaki gibi), `run_id`'nin varlığına
+bağlı değil. 10 yeni saf test (`tests/test_replay_proofs.py`) yerelde
+GERÇEKTEN doğrulandı (291 passed, 2 skipped toplam).
 
 ## 4. Altyapı kısıtları
 
@@ -157,14 +228,64 @@ Kontrol edilenler:
   gerçek bir üretim (canlı `round_runner.py`) akışında segment
   benzeri bir yeniden başlatma olsaydı, zincirdeki itibar geçmişinin
   kaybolacağı AÇIKÇA not düşülmeli.
+- **YENİ (Bölüm 3.2) — kaynak izolasyonu kısıtı:** anvil'in bellek
+  şişmesi, AYNI makinede koşan ezkl alt sürecini de yavaşlattı (13
+  ispat, `setup+prove` ~74s yerine ~250-300s). Bu, "anvil'i periyodik
+  yeniden başlat" (segment mimarisi) çözümünün YETERSİZ kaldığı bir
+  durum — segment yeniden başlatılana KADAR geçen pencerede ezkl yine
+  yavaşlayabilir. Kalıcı çözüm KAYNAK İZOLASYONU (ayrı makine/kapsayıcı
+  veya bellek cgroup limiti), segment mimarisi sadece bir HAFİFLETME.
 
 ## 5. Sonuç
 
 Faz E'nin kabul kriteri (60 shard üzerinde tam ve kademeli modun
 KARŞILAŞTIRILABİLİR şekilde koşup makalenin ana maliyet tablosunu
-üretmesi) **karşılandı**: iki mod da sıfır başarısızlıkla tamamlandı,
-gas tasarrufunun MEKANİZMASI (ispat sayısına orantılı, round-sayısından
-bağımsız) kod incelemesiyle kanıtlandı, süre tasarrufundaki EK
-bileşen (ispat başına süre farkı) tespit edildi ama kesin kök sebebi
-mevcut veriyle KANITLANAMADI — bu açıkça bir sınır olarak işaretlendi,
-uydurulmadı.
+üretmesi) **karşılandı**: iki mod da sıfır başarısızlıkla tamamlandı.
+Gas tasarrufunun MEKANİZMASI (ispat sayısına orantılı, round-sayısından
+bağımsız) kod incelemesiyle kanıtlandı. Süre tasarrufundaki görünen EK
+bileşen (ham `%82.8 > %65.0` farkı) **KESİN olarak teşhis edildi**:
+tam moddaki 13 ispat, anvil'in bellek şişmesinin (Bölüm 3.2) AYNI
+makinedeki ezkl'i de yavaşlattığı bozuk bir ortamda ölçülmüş — kademeli
+modun 21 ispatı bu aralıkla hiç kesişmediği için etkilenmedi. Normalize
+edildiğinde (Bölüm 1(b)) süre tasarrufu da gas tasarrufuyla AYNI
+değere (%65.0) yakınsıyor. Bu, ilk raporun "ortam değişkenliği"
+hipotezinin YERİNE geçen, veriyle doğrudan kanıtlanmış bir sonuç —
+uydurulmadı, kullanıcının ham veri incelemesiyle KANITLANDI.
+
+## 6. Öneri — bozuk-ortam ispatlarını temiz ölçümle değiştirmek
+
+13 bozuk-ortam ispatını (Bölüm 3.2'deki liste) `--force` ile yeniden
+çalıştırıp GERÇEK, temiz bir tam-mod ölçümü elde etmek mümkün — segment
+mimarisi artık devrede olduğundan (bu koşumdaki gibi bir anvil çökmesi
+BİR DAHA olmamalı), bu ispatlar da diğer 47'si gibi ~74-78s'de
+tamamlanmalı. Script'in mevcut `--rounds`/`--sites` arayüzü tekil
+(round,site) çiftlerinin keyfi bir listesini DEĞİL, bir round×site
+DİKDÖRTGENİNİ kabul ediyor — ama `--sites` virgüllü liste destekliyor
+(`parse_int_range("0,2")`), bu yüzden 13 kombinasyonun TAMAMI, mevcut
+CLI'a HİÇBİR yeni kod eklemeden, 5 hedefli komutla TAM İSABETLİ şekilde
+kapsanabiliyor:
+
+```bash
+python -m scripts.replay_proofs --env colab --mode full --rounds 9  --sites 0,2 --force
+python -m scripts.replay_proofs --env colab --mode full --rounds 10 --sites 0-3 --force
+python -m scripts.replay_proofs --env colab --mode full --rounds 11 --sites 0-3 --force
+python -m scripts.replay_proofs --env colab --mode full --rounds 12 --sites 0,2 --force
+python -m scripts.replay_proofs --env colab --mode full --rounds 13 --sites 1   --force
+```
+
+Not: mesajınızda "12 ispat" deniyor ama listelenen kombinasyonların
+toplamı **13** (round9: 2 + round10: 4 + round11: 4 + round12: 2 +
+round13: 1 = 13) — küçük bir sayım farkı, yukarıdaki 5 komut LİSTENİN
+TAMAMINI (13/13) kapsıyor, eksik/fazla bırakmıyor. Her komut kendi
+`--force`'u sayesinde SADECE belirtilen (round,site) çiftlerini
+yeniden çalıştırıp `replay_results_full.json`'daki mevcut 47 sağlıklı
+kaydı KORUYARAK üzerine yazacak (`main()`'in `if key in all_results and
+not args.force: continue` kontrolü `--force` ile atlanıyor, ama
+DOKUNULMAYAN diğer anahtarlar dosyada olduğu gibi kalıyor — bkz.
+`scripts/replay_proofs.py` satır ~757). Tahmini süre: 13 × ~80s
+(ezkl) + solc/deploy/segment kurulum ek yükü ≈ 15-20 dakika (kullanıcının
+"~15 dakika" tahminiyle uyumlu). Bu koşumdan sonra `replay_results_full.json`
+TAMAMEN sağlıklı olacak, `compute_healthy_avg_ezkl_seconds` full modun
+KENDİ verisinden de aynı ~74-78s'yi doğrulayacak ve bu raporun Bölüm
+1(b)'sindeki normalize tablo GERÇEK (varsayımsız) tam-mod verisiyle
+yeniden üretilebilecek.

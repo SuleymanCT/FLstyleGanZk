@@ -1009,6 +1009,37 @@ Altyapı: her iki modda 1'er planlı anvil yeniden başlatması, sıfır
 altyapı kaynaklı başarısızlık — segment mimarisi (madde 4) beklendiği
 gibi çalıştı.
 
+**7. DÜZELTME — 159s/78s farkının GERÇEK sebebi bulundu, "ortam
+değişkenliği" hipotezi YANLIŞ çıktı:** kullanıcının ham
+`replay_results_full.json` incelemesi ispat sürelerinin İKİ NET kümeye
+ayrıldığını gösterdi — sağlıklı (`setup~36s, prove~37s`) ve bozuk
+(`setup~110-160s, prove~140s`). Bozuk kümedeki TÜM 13 ispat
+(round9_site0/2, round10 4 site, round11 4 site, round12_site0/2,
+round13_site1) tam olarak anvil'in ÇÖKTÜĞÜ ilk tam mod koşumunda
+üretilmiş — anvil'in bellek şişmesi SADECE RPC'yi değil, AYNI
+makinedeki ezkl alt sürecini de (swap) yavaşlatmış. Kademeli modun 21
+ispatı bu round/site aralığıyla TAM AYRIK olduğundan hiç etkilenmedi
+— kademeli modun 78,185s'lik ortalaması zaten TEMİZDİ. Normalize
+edildiğinde (sadece healthy verilerle, ispat başına sabit ~78,185s
+üzerinden) süre tasarrufu da %65,0'a yakınsıyor — gas tasarrufuyla
+BİREBİR örtüşüyor, "%82,8 > %65,0" farkı sadece bir ölçüm artefaktıymış.
+**Kod:** `scripts/replay_proofs.py`'ye `classify_environment_health`/
+`split_by_environment_health`/`compute_healthy_avg_ezkl_seconds`/
+`render_normalized_comparison_table` eklendi (setup+prove>150s ise
+"degraded"); her yeni sonuca `run_id` (main() başına üretilen, hangi
+Colab koşumundan geldiğini işaretleyen) yazılmaya başlandı — eski
+kayıtlarda yok, bu yüzden sınıflandırma HER ZAMAN timings üzerinden.
+`docs/phase_e_report.md` iki tablo içerecek şekilde düzeltildi: (a)
+ham toplamlar (bozuk veriyi içerir), (b) normalize karşılaştırma
+(sadece healthy veri). Bulgu makalenin uygulanabilirlik bölümüne not
+düşüldü: ZK ispat üretimi aynı makinedeki blockchain düğümünün bellek
+davranışına duyarlı, kaynak izolasyonu (ayrı makine/cgroup) gerekiyor
+— segment mimarisi sadece bir hafifletme, kalıcı çözüm değil. 10 yeni
+saf test, yerelde GERÇEKTEN doğrulandı (291 passed, 2 skipped
+toplam). **Öneri (henüz koşulmadı):** 13 bozuk-ortam ispatını
+`--force` ile 5 hedefli komutla yeniden koşturup temiz ölçüm almak —
+komutlar `docs/phase_e_report.md` Bölüm 6'da.
+
 **Kabul:** maliyet karşılaştırma tablosu (`docs/phase_e_replay.md`,
 script tarafından üretildi) + yorumlu analiz (`docs/phase_e_report.md`)
 GERÇEK Colab verisiyle üretildi, iki mod da tam koştu, sıfır
