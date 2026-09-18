@@ -1071,23 +1071,73 @@ kademeli, 13 ispatın yeniden koşumu) sıfır başarısızlıkla tamamlandı,
 raporlanacak sayı (%65) hem gas hem normalize süre için doğrulandı.
 **KARŞILANDI.**
 
-## Faz F (Colab) — Saldırılar ve canlı koşu
+## Faz F (Colab) — Saldırı × koruma matrisi
 
-**durum: yapılmadı**
+**durum: kod yazıldı, Colab'da HENÜZ koşulmadı/doğrulanmadı.**
 
-`attacks/`: random_weights, scaled_poison (10x/50x/100x),
-conditional_poison (mapping'in DR-0 ve DR-4 gömme satırlarını
-takasla). Hepsi ağırlık seviyesinde, eğitim gerektirmez. Bu adım tam G
-ağırlıkları üzerinde çalışır (FID için tam generator lazım), Colab'da
-koşar.
+Kullanıcının bu fazı detaylandıran talimatı, PLAN.md'nin eski kısa
+taslağının YERİNE geçti (bkz. `docs/phase_f_attacks.md`'nin "Tasarım
+kararları" bölümü) — İKİ kapsam farkı BİLEREK not düşülüyor:
+1. **LPIPS eklenmedi** — kullanıcının detaylı talimatı FID+KID+sınıf-
+   tutarlılığı istedi, LPIPS'ten hiç bahsetmedi; eski taslağın LPIPS
+   maddesi bu turda UYGULANMADI (istenirse ayrı bir ek olabilir).
+2. **"3 round canlı entegre koşu" bu turda YAPILMADI** — ayrı bir iş
+   olarak kapsam dışında bırakıldı (aşağıdaki "Kabul" bunu ayrı bir
+   madde olarak işaretliyor).
 
-Her senaryo için: korumasız FedAvg -> FID/KID, ZK kapılı FedAvg ->
-FID/KID, ispat saldırıyı yakaladı mı.
+`attacks/random_weights.py` (aynı şekilli TAMAMEN rastgele tensörler),
+`attacks/scaled_poison.py` (ΔG=site-önceki_global, `scale × ΔG`
+önceki globale eklenir — 10x/50x/100x), `attacks/conditional_poison.py`
+(`mapping.embed.weight`'in DR-0/DR-4 satırlarını takas) — ÜÇÜ de SAF
+state_dict operasyonu, eğitim YOK (CLAUDE.md madde 2/3/6). 14+5=19 yeni
+saf test, yerelde GERÇEKTEN doğrulandı.
 
-`eval/metrics.py`: fid50k_full, KID (sınıf başına), LPIPS (sınıf
-başına). Mevcut ölçüm ayarlarıyla birebir aynı olmalı, yeni yol icat
-etme — sonuçlar önceki deneylerle karşılaştırılabilir kalmalı.
+`attacks/detection.py`: **önemli düzeltme** — `orchestrator/round_runner.py:
+generate_and_submit_proof`/`run_round` incelendiğinde, weight
+commitment ve ZK devresinin HER ZAMAN AYNI `full_state` objesinden
+türediği (bu kod tabanında bir sitenin "taahhüt ettiğinden FARKLI bir
+ağırlığı ispatlayıp katkıda bulunması" için HİÇBİR kod yolu olmadığı)
+görüldü. Yani ZK, ağırlığın İÇERİĞİNİ (iyi/kötü) DEĞİL, taahhüt-ispat-
+katkı TUTARLILIĞINI kanıtlıyor — kullanıcının "conditional_poison ZK'nın
+asıl değerini gösterir" beklentisi bu analizle İNCELTİLDİ: üç saldırının
+DA (dürüst-ama-bozulmuş istemci modelinde) ZK tarafından
+YAKALANMAMASI BEKLENİYOR (varsayılmıyor, `verify_commitment_consistency`
+ile GERÇEKTEN hesaplanacak). Ayrıca ZK devresi SADECE mapping alt-ağını
+kapsıyor — `random_weights`/`scaled_poison` synthesis ağını da bozduğundan
+kısmen ZK'nın hiç GÖRMEDİĞİ bir alanı hedefliyor
+(`attack_touches_zk_proven_scope` bunu ayırt ediyor).
 
-Ayrıca 3 round canlı entegre koşu.
+`eval/metrics.py`: FID/KID StyleGAN-XL'in KENDİ `metrics.metric_main.calc_metric`'i
+ÇAĞRILARAK hesaplanıyor (WebFetch ile gerçek kaynaktan doğrulandı) —
+`training_options.json`'dan GERÇEK `dataset_kwargs`/`num_gpus`/`metrics`
+okunuyor (`load_metric_options_from_training_options`), hiçbir ayar
+uydurulmuyor. **Sınıf tutarlılığı**: kullanıcının önerdiği DR-0/DR-4
+ikili KID kontrolü, TÜM DR sınıflarını (0-4) kapsayan 5×5 bir KID
+karışıklık matrisine genişletildi (`class_confusion_matrix`) —
+`perceived_class[g]=argmin_r kid_matrix[g][r]`, `!=g` ise swap tespiti;
+StyleGAN-XL'in `kernel_inception_distance.compute_kid` formülü BİREBİR
+(WebFetch ile doğrulanmış) `compute_kid_from_features` olarak taşındı,
+sadece sınıf-filtrelenmiş çiftlere uygulandı (resmi fonksiyon sınıf
+filtrelemeyi desteklemiyor).
 
-**Kabul:** saldırı matrisi + canlı koşu logu.
+`scripts/run_attacks.py`: 5 saldırı varyantı × 2 koşul (unprotected:
+`fl.fedavg_utils.RunningAverage`, protected: `orchestrator.aggregate.aggregate_round`
+— İKİSİ de DOĞRUDAN reuse, yeniden yazılmadı) = 10 tam pipeline.
+Gerçek Faz A checkpoint'lerini (`fl.round_replay.load_site_update` +
+`scripts.audit_fedavg.load_fedavg_file`) kullanır. `--metrics-mode
+{full,quick}` (quick: resmi fid50k_full/kid50k_full atlanır, sadece
+küçük örnekli sınıf-tutarlılığı — önce ucuz sağlama için),
+`--only-attack`/`--force` ile devam edilebilir, `{zk_root}/attacks/attack_results.json`'a
+atomik yazılır. 10 yeni saf test yerelde doğrulandı.
+
+`docs/phase_f_attacks.md`: matris tablosu ŞABLONU + tasarım kararları
++ "dürüstlük noktası" (ZK içerik değil tutarlılık kanıtlar) hazır —
+sayılar Colab koşumundan SONRA doldurulacak.
+
+Tam paket: 333 passed, 2 skipped (önceki: 291).
+
+**Kabul (İKİ ayrı madde):**
+1. Saldırı × koruma matrisi (bu bölüm) — **HENÜZ KARŞILANMADI**, Colab
+   koşumu bekleniyor.
+2. 3 round canlı entegre koşu — **bu turda hiç ELE ALINMADI**, ayrı
+   bir istek/tur gerektirir.

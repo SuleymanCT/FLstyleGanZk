@@ -1,0 +1,350 @@
+#!/usr/bin/env python
+"""Faz F: saldırı × koruma matrisi — ZK doğrulamasının/norm kontrolünün
+zehirleme saldırılarını GERÇEKTEN yakalayıp yakalamadığını FID/KID/
+sınıf-tutarlılığı ile ölçer.
+
+**Hiçbir model eğitilmez/yeniden eğitilmez** (CLAUDE.md madde 2/3/6) —
+üç saldırı da (`attacks/random_weights.py`, `attacks/scaled_poison.py`,
+`attacks/conditional_poison.py`) SADECE ağırlık seviyesinde çalışır.
+Bu script Faz A'da ZATEN eğitilmiş, `raw_root`'ta (salt okunur) duran
+GERÇEK site checkpoint'lerini (`fl.round_replay.load_site_update`)
+alıp bozup FedAvg yapar.
+
+## Akış (her saldırı × her koşul için)
+
+1. Belirtilen `--round`'un 4 site'ının GERÇEK `G_ema.state_dict()`'i
+   yüklenir (`fl.round_replay.load_site_update` — Faz D'de zaten
+   kanıtlanmış, yeniden yazılmaz).
+2. `--round - 1`'in GERÇEK fedavg dosyası (`scripts.audit_fedavg.load_fedavg_file`)
+   önceki global olarak yüklenir (`scaled_poison`'ın ΔG hesabı VE
+   norm kontrolünün referans noktası — Faz A'nın KENDİ dosyası,
+   uydurulmaz).
+3. `--poisoned-site` indeksli site'ın state_dict'i seçilen saldırıyla
+   bozulur.
+4. **UNPROTECTED**: 4 site (3 dürüst + 1 zehirli) `fl.fedavg_utils.RunningAverage`
+   ile DOĞRUDAN ortalanır (hiçbir kapı yok) — `orchestrator/aggregate.py`
+   YENİDEN YAZILMAZ, sadece kapısız hali (`RunningAverage`) kullanılır.
+5. **PROTECTED**: `orchestrator.aggregate.aggregate_round` DOĞRUDAN
+   çağrılır — bu fonksiyon zaten "zincir onayı (ZK) + norm kontrolü"
+   kapılarının İKİSİNİ de uyguluyor, burada YENİDEN YAZILMIYOR.
+   `chain_approved` HER site için `True` verilir (bkz.
+   `attacks/detection.py`'nin gerekçesi: ZK bir İÇERİK filtresi
+   DEĞİL, taahhüt-ispat-katkı TUTARLILIK kanıtı — bu simülasyondaki
+   "dürüst ama bozulmuş" istemci modelinde ZK HER ZAMAN geçerdi).
+6. Her iki koşul için de sonuç global `G_ema`'nın ("shell" — 4 site'tan
+   birinin GERÇEK, sadece state_dict'i DEĞİŞTİRİLECEK modülü) içine
+   yüklenir, `eval/metrics.py` ile `fid50k_full`/`kid50k_full`
+   (`--metrics-mode full`) + sınıf-tutarlılığı matrisi hesaplanır.
+7. Tespit analizi: `attacks/detection.py: verify_commitment_consistency`
+   (ZK) + `orchestrator.aggregate.gate_site_update`'in `delta_norm`/
+   dışlama sonucu (norm) — İKİSİ de GERÇEKTEN hesaplanır, varsayılmaz.
+
+## Dayanıklılık
+
+`{attacks_dir}/attack_results.json`'a her (saldırı,koşul) sonrası
+ATOMİK yazılır (`scripts.bench_circuit.save_bench_results` — tmp+
+`os.replace`); `--force` verilmedikçe zaten sonuçlanmış (saldırı,koşul)
+çiftleri ATLANIR (Colab kopmalarına karşı devam edilebilir). Büyük ara
+tensörler (`site_states`, üretilen görüntüler) her adımdan sonra
+`del`/`gc.collect()`/`torch.cuda.empty_cache()` ile temizlenir.
+
+BİLİNÇLİ TEST SINIRI: gerçek `raw_root` pkl'leri, StyleGAN-XL reposu,
+GPU, gerçek APTOS/DR veri kümesi gerektirir — SADECE Colab'da çalışır.
+Saf yardımcılar (`apply_attack`, `resolve_training_options_path`)
+`tests/test_run_attacks.py`'de yerelde test edilir.
+
+Kullanım (Colab'da):
+    python -m scripts.run_attacks --env colab --round 10 --metrics-mode quick   # önce ucuz sağlama
+    python -m scripts.run_attacks --env colab --round 10 --metrics-mode full    # resmi fid50k_full/kid50k_full
+"""
+
+from __future__ import annotations
+
+import argparse
+import gc
+import os
+import time
+
+import torch
+
+from attacks.conditional_poison import DEFAULT_EMBED_KEY, swap_embed_rows
+from attacks.detection import attack_touches_zk_proven_scope, verify_commitment_consistency
+from attacks.random_weights import randomize_state_dict
+from attacks.scaled_poison import scale_delta
+from configs.loader import load_paths
+from orchestrator.aggregate import aggregate_round, compute_delta_norm
+from orchestrator.schedule import load_schedule_config
+from scripts.bench_circuit import (
+    load_bench_results as load_attack_results,
+    save_bench_results as save_attack_results,
+    write_json_file,
+)
+from scripts.inventory import find_run_subdir
+from storage.pathguard import assert_writable
+
+DEFAULT_ROUND = 10
+DEFAULT_POISONED_SITE_INDEX = 0
+DR_NUM_CLASSES = 5
+SWAP_ROW_A, SWAP_ROW_B = 0, 4  # DR-0 / DR-4 (kullanıcının belirttiği saldırı hedefi)
+
+ATTACK_NAMES = ("random_weights", "scaled_poison_10x", "scaled_poison_50x", "scaled_poison_100x", "conditional_poison")
+CONDITIONS = ("unprotected", "protected")
+
+FULL_CLASS_IMAGES_PER_CLASS = 200
+QUICK_CLASS_IMAGES_PER_CLASS = 20
+
+
+# ---------------------------------------------------------------------------
+# Saf yardımcılar (StyleGAN-XL/GPU GEREKTİRMEZ)
+# ---------------------------------------------------------------------------
+
+
+def result_key(attack_name: str, condition: str) -> str:
+    return f"{attack_name}__{condition}"
+
+
+def resolve_training_options_path(raw_root: str, round_id: int, site_id: int) -> str:
+    """`training_options.json`'un GERÇEK yolunu, `scripts.inventory.find_run_subdir`
+    (zaten test edilmiş) ile çözer — Faz A'nın inventory taramasıyla
+    AYNI dizin yapısı varsayımı, hiçbir yeni yol icat edilmez."""
+    site_dir = os.path.join(raw_root, f"round_{round_id}", f"site_{site_id}")
+    if not os.path.isdir(site_dir):
+        raise FileNotFoundError(f"Site dizini bulunamadı: '{site_dir}'.")
+    run_dir, warning = find_run_subdir(site_dir)
+    if run_dir is None:
+        raise RuntimeError(f"round {round_id} site {site_id}: {warning}")
+    path = os.path.join(run_dir, "training_options.json")
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"'{path}' bulunamadı — round {round_id} site {site_id}.")
+    return path
+
+
+def apply_attack(attack_name: str, *, poisoned_site_state: dict, prev_global_state: dict) -> tuple[dict, list]:
+    """Saldırıyı `poisoned_site_state`'e uygular, `(poisoned_state,
+    modified_keys)` döner. `modified_keys`: saldırının KAVRAMSAL
+    olarak hedeflediği anahtar kümesi (ZK kapsam analizi için —
+    `attacks/detection.py: attack_touches_zk_proven_scope`)."""
+    if attack_name == "random_weights":
+        poisoned = randomize_state_dict(poisoned_site_state, generator=torch.Generator().manual_seed(0))
+        return poisoned, list(poisoned.keys())
+
+    if attack_name.startswith("scaled_poison_"):
+        scale_str = attack_name.removeprefix("scaled_poison_").removesuffix("x")
+        scale = float(scale_str)
+        poisoned = scale_delta(poisoned_site_state, prev_global_state, scale=scale)
+        return poisoned, list(poisoned.keys())
+
+    if attack_name == "conditional_poison":
+        poisoned = swap_embed_rows(poisoned_site_state, SWAP_ROW_A, SWAP_ROW_B, embed_key=DEFAULT_EMBED_KEY)
+        return poisoned, [DEFAULT_EMBED_KEY]
+
+    raise ValueError(f"Bilinmeyen saldırı: {attack_name!r} (geçerli: {ATTACK_NAMES})")
+
+
+def build_unprotected_global(site_states: dict) -> dict:
+    """Hiçbir kapı YOK — 4 site (3 dürüst + 1 zehirli) doğrudan
+    ortalanır. `fl.fedavg_utils.RunningAverage` YENİDEN YAZILMAZ."""
+    from fl.fedavg_utils import RunningAverage
+
+    running = RunningAverage()
+    for state in site_states.values():
+        running.update(state)
+    return running.result()
+
+
+def build_protected_global(prev_global: dict, site_states: dict, *, tau_norm_threshold: float) -> dict:
+    """`orchestrator.aggregate.aggregate_round` DOĞRUDAN çağrılır —
+    ZK-onay (`chain_approved`) + norm kapısının İKİSİ de zaten orada.
+    `chain_approved=True` HER site için: bu simülasyondaki "dürüst ama
+    bozulmuş" istemci modelinde ZK her zaman geçerdi (bkz. modül
+    docstring'i, madde 5)."""
+    chain_approved = {site: True for site in site_states}
+    return aggregate_round(prev_global, site_states, tau_norm_threshold=tau_norm_threshold, chain_approved=chain_approved)
+
+
+# ---------------------------------------------------------------------------
+# StyleGAN-XL/GPU/gerçek veri kümesine bağımlı adımlar
+# (BİLİNÇLİ TEST SINIRI — sadece Colab'da çalışır)
+# ---------------------------------------------------------------------------
+
+
+def evaluate_condition(
+    *,
+    global_state: dict,
+    g_ema_shell,
+    dims: dict,
+    metric_options: dict,
+    dataset_root_override: str | None,
+    metrics_mode: str,
+    device,
+) -> dict:
+    """Bir (saldırı,koşul) çiftinin GERÇEK global ağırlığını `g_ema_shell`'e
+    yükleyip FID/KID (`--metrics-mode full`) + sınıf-tutarlılığı
+    matrisini hesaplar."""
+    from eval.metrics import class_confusion_matrix, run_official_metric
+
+    t0 = time.perf_counter()
+    g_ema_shell.load_state_dict(global_state)
+    g_ema_shell.to(device).eval()
+
+    result: dict = {}
+    if metrics_mode == "full":
+        for metric_name in ("fid50k_full", "kid50k_full"):
+            t_metric = time.perf_counter()
+            metric_result = run_official_metric(
+                metric_name, g_ema_shell, dataset_kwargs=metric_options["dataset_kwargs"],
+                num_gpus=metric_options["num_gpus"], device=device,
+            )
+            result.update(metric_result)
+            result[f"{metric_name}_seconds"] = time.perf_counter() - t_metric
+            print(f"[run_attacks]   {metric_name}: {metric_result} ({result[f'{metric_name}_seconds']:.1f}s)")
+    else:
+        print("[run_attacks]   --metrics-mode quick: resmi fid50k_full/kid50k_full ATLANDI (sadece sınıf-tutarlılığı koşuluyor).")
+
+    num_images_per_class = FULL_CLASS_IMAGES_PER_CLASS if metrics_mode == "full" else QUICK_CLASS_IMAGES_PER_CLASS
+    t_confusion = time.perf_counter()
+    confusion = class_confusion_matrix(
+        g_ema_shell, dataset_kwargs=metric_options["dataset_kwargs"], num_classes=DR_NUM_CLASSES,
+        z_dim=dims["z_dim"], device=device, num_images_per_class=num_images_per_class,
+    )
+    result["class_confusion"] = confusion
+    result["class_confusion_seconds"] = time.perf_counter() - t_confusion
+    result["mean_diagonal_kid"] = sum(confusion["kid_matrix"][i][i] for i in range(DR_NUM_CLASSES)) / DR_NUM_CLASSES
+    result["total_seconds"] = time.perf_counter() - t0
+
+    del global_state
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return result
+
+
+def parse_args(argv=None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Faz F: saldırı × koruma matrisi (FID/KID/sınıf-tutarlılığı).")
+    parser.add_argument("--env", default=None, choices=["local", "colab"])
+    parser.add_argument("--paths-config", default="configs/paths.yaml")
+    parser.add_argument("--schedule-config", default="configs/schedule.yaml")
+    parser.add_argument("--round", type=int, default=DEFAULT_ROUND, help="ağırlıkların alınacağı gerçek round (--round - 1'in fedavg dosyası önceki global olarak kullanılır)")
+    parser.add_argument("--poisoned-site", type=int, default=DEFAULT_POISONED_SITE_INDEX)
+    parser.add_argument("--dataset-root", default=None, help="training_options.json'daki dataset yolu bu makinede geçersizse, yeniden konumlandırma kökü")
+    parser.add_argument("--attacks-dir", default=None, help="varsayılan: {zk_root}/attacks")
+    parser.add_argument(
+        "--metrics-mode", default="full", choices=["full", "quick"],
+        help="'full': resmi fid50k_full/kid50k_full (saatler sürebilir, 5 saldırı x 2 koşul x 50k görüntü). "
+             "'quick': FID/KID ATLANIR, sadece küçük örnekli sınıf-tutarlılığı koşulur (dakikalar, önce sağlama için).",
+    )
+    parser.add_argument("--only-attack", default=None, help="virgülle ayrılmış saldırı adı listesi — sadece bunları koştur (bkz. ATTACK_NAMES)")
+    parser.add_argument("--force", action="store_true", help="zaten sonuçlanmış (saldırı,koşul) çiftlerini yeniden çalıştır")
+    return parser.parse_args(argv)
+
+
+def main(argv=None) -> int:
+    args = parse_args(argv)
+
+    from eval.metrics import load_metric_options_from_training_options
+    from fl.module_tree import extract_known_attrs
+    from fl.round_replay import load_site_g_ema_module, load_site_update
+    from scripts.audit_fedavg import load_fedavg_file
+
+    paths = load_paths(env=args.env, config_path=args.paths_config)
+    schedule_config = load_schedule_config(args.schedule_config)
+    tau = schedule_config["tau_norm_threshold"]
+
+    attacks_dir = args.attacks_dir or os.path.join(paths["zk_root"], "attacks")
+    assert_writable(attacks_dir)
+    os.makedirs(attacks_dir, exist_ok=True)
+    results_path = os.path.join(attacks_dir, "attack_results.json")
+    all_results = load_attack_results(results_path)
+
+    attack_names = [a.strip() for a in args.only_attack.split(",")] if args.only_attack else list(ATTACK_NAMES)
+    unknown = [a for a in attack_names if a not in ATTACK_NAMES]
+    if unknown:
+        raise ValueError(f"Bilinmeyen saldırı adı/ları: {unknown}. Geçerli: {ATTACK_NAMES}")
+
+    print(f"[run_attacks] round={args.round} poisoned_site={args.poisoned_site} attacks={attack_names} metrics_mode={args.metrics_mode}")
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[run_attacks] device={device}")
+
+    print("[run_attacks] Gerçek site state_dict'leri yükleniyor (Faz A checkpoint'leri, salt okunur)...")
+    site_states_original = {i: load_site_update(paths["raw_root"], paths["stylegan_xl_repo"], args.round, i) for i in range(4)}
+
+    prev_global_path = os.path.join(paths["raw_root"], f"fedavg_{args.round - 1}.pt")
+    print(f"[run_attacks] Önceki global yükleniyor: {prev_global_path}")
+    prev_global_state = load_fedavg_file(prev_global_path)
+
+    print("[run_attacks] G_ema 'shell' modülü yükleniyor (state_dict'i her koşulda değiştirilecek)...")
+    g_ema_shell = load_site_g_ema_module(paths["raw_root"], paths["stylegan_xl_repo"], args.round, 0)
+    dims = extract_known_attrs(g_ema_shell, names=("z_dim", "c_dim", "w_dim", "num_ws"))
+    if dims.get("bulunamadi"):
+        raise RuntimeError(f"G_ema üzerinde beklenen boyut alanları bulunamadı: {dims['bulunamadi']}")
+    if dims["c_dim"] != DR_NUM_CLASSES:
+        raise RuntimeError(f"Beklenen c_dim={DR_NUM_CLASSES}, gerçek G_ema.c_dim={dims['c_dim']} — DR sınıf sayısı varsayımı YANLIŞ, sabitleri güncelle.")
+    print(f"[run_attacks] Boyutlar: {dims}")
+
+    training_options_path = resolve_training_options_path(paths["raw_root"], args.round, 0)
+    print(f"[run_attacks] Ölçüm ayarları okunuyor: {training_options_path}")
+    metric_options = load_metric_options_from_training_options(training_options_path, dataset_root_override=args.dataset_root)
+    print(f"[run_attacks] metrics={metric_options['metrics']} num_gpus={metric_options['num_gpus']} dataset_path={metric_options['dataset_kwargs'].get('path')}")
+
+    for attack_name in attack_names:
+        poisoned_site_original = site_states_original[args.poisoned_site]
+        poisoned_state, modified_keys = apply_attack(attack_name, poisoned_site_state=poisoned_site_original, prev_global_state=prev_global_state)
+
+        delta_norm = compute_delta_norm(prev_global_state, poisoned_state)
+        norm_caught = delta_norm > tau
+        zk_caught = not verify_commitment_consistency(poisoned_state, poisoned_state)
+        zk_in_scope = attack_touches_zk_proven_scope(modified_keys)
+        print(
+            f"\n=== Saldırı: {attack_name} — ||ΔG||={delta_norm:.2f} (tau={tau}) "
+            f"norm_caught={norm_caught} zk_in_scope={zk_in_scope} zk_caught={zk_caught} ==="
+        )
+
+        site_states = dict(site_states_original)
+        site_states[args.poisoned_site] = poisoned_state
+
+        for condition in CONDITIONS:
+            key = result_key(attack_name, condition)
+            if key in all_results and not args.force:
+                print(f"[run_attacks] '{key}' zaten sonuçlanmış, atlanıyor (--force ile yeniden çalıştır).")
+                continue
+
+            print(f"[run_attacks] --- koşul: {condition} ---")
+            if condition == "unprotected":
+                aggregation = {"global_state": build_unprotected_global(site_states), "included_sites": list(site_states), "gate_results": None}
+            else:
+                aggregation = build_protected_global(prev_global_state, site_states, tau_norm_threshold=tau)
+
+            poisoned_included = args.poisoned_site in aggregation["included_sites"]
+            print(f"[run_attacks] '{key}': zehirli site dahil mi? {poisoned_included}")
+
+            metrics_result = evaluate_condition(
+                global_state=aggregation["global_state"], g_ema_shell=g_ema_shell, dims=dims,
+                metric_options=metric_options, dataset_root_override=args.dataset_root,
+                metrics_mode=args.metrics_mode, device=device,
+            )
+
+            all_results[key] = {
+                "attack": attack_name,
+                "condition": condition,
+                "poisoned_site_included": poisoned_included,
+                "delta_norm": delta_norm,
+                "norm_caught": norm_caught,
+                "zk_in_scope": zk_in_scope,
+                "zk_caught": zk_caught,
+                "modified_keys_count": len(modified_keys),
+                **metrics_result,
+            }
+            save_attack_results(all_results, results_path)
+            print(f"[run_attacks] '{key}' tamamlandı, {results_path} güncellendi.")
+
+        del poisoned_state, site_states
+        gc.collect()
+
+    print(f"\n[run_attacks] Bitti. Tam sonuç: {results_path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
