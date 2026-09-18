@@ -497,6 +497,8 @@ def run_combo_in_subprocess(
     replay_dir: Path,
     timeout: float,
     keep_artifacts: bool,
+    run_id: str,
+    segment_index: int,
     verbose: bool = False,
 ) -> dict:
     key = replay_combo_key(round_id, site_index)
@@ -583,6 +585,22 @@ def run_combo_in_subprocess(
             result["max_abs_error_relative_pct"] = 100.0 * max_abs_error / w_abs_max
         else:
             result["max_abs_error_relative_pct"] = None
+
+    # `run_id`/`segment_index` işçi süreç HİÇ BİLMEDİĞİ için `result.json`'a
+    # (results/{key}.json) YAZILMAMIŞTI — sadece ebeveynin BELLEKTEKİ
+    # `all_results` sözlüğüne (ve oradan `replay_results_<mod>.json`'a)
+    # ekleniyordu. Faz E'nin ikinci Colab koşumunda run_id'nin TÜM
+    # kayıtlarda "-" görünmesinin kök sebebi buydu — kullanıcı per-kombinasyon
+    # `results/{key}.json` dosyalarını inceliyordu, onlarda bu alanlar HİÇ
+    # yoktu. Artık ebeveyn bu değerleri BURADA (dosyaya geri yazmadan önce)
+    # ekliyor, iki artifact (`results/{key}.json` ve `replay_results_<mod>.json`)
+    # TUTARLI kalıyor.
+    result["run_id"] = run_id
+    result["segment_index"] = segment_index
+    try:
+        write_json_file(result, str(result_path))
+    except Exception as rewrite_error:  # noqa: BLE001 - aggregate dosya zaten doğru kaydediliyor, bu sadece per-kombinasyon dosyanın tutarlılığı için
+        print(f"[replay_proofs] UYARI: '{key}' için result_path yeniden yazılamadı ({rewrite_error}) — aggregate sonuç yine de doğru.")
 
     # 1) işçinin TAM çıktısını her zaman göster: başarısızsa KOŞULSUZ,
     #    başarılıysa sadece --verbose ile (bench_circuit.py'de bu hiç
@@ -910,7 +928,7 @@ def main(argv=None) -> int:
                         rpc_url=segment["anvil"].rpc_url, round_manager_address=segment["round_manager_address"], abi_file=segment["abi_file"],
                         private_key=site_key, shards_dir=shards_dir, circuit_config_path=args.circuit_config,
                         work_root=work_root, replay_dir=replay_dir, timeout=args.timeout, keep_artifacts=args.keep_artifacts,
-                        verbose=args.verbose,
+                        run_id=run_id, segment_index=segment["segment_index"], verbose=args.verbose,
                     )
                     proofs_in_segment += 1
                     if result.get("verified"):

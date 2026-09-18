@@ -1036,14 +1036,40 @@ düşüldü: ZK ispat üretimi aynı makinedeki blockchain düğümünün bellek
 davranışına duyarlı, kaynak izolasyonu (ayrı makine/cgroup) gerekiyor
 — segment mimarisi sadece bir hafifletme, kalıcı çözüm değil. 10 yeni
 saf test, yerelde GERÇEKTEN doğrulandı (291 passed, 2 skipped
-toplam). **Öneri (henüz koşulmadı):** 13 bozuk-ortam ispatını
-`--force` ile 5 hedefli komutla yeniden koşturup temiz ölçüm almak —
-komutlar `docs/phase_e_report.md` Bölüm 6'da.
+toplam).
+
+**8. DÜZELTME (nihai) — anvil bellek hipotezi de ELENDİ, gerçek sebep
+Colab'ın paylaşımlı CPU değişkenliği:** madde 7'nin önerdiği 13
+bozuk-ortam ispatı `--force` ile TAZE bir anvil'le (sıfır segment
+restart'ı) yeniden koşuldu — sonuç İYİLEŞMEDİ, KÖTÜLEŞTİ (toplam ezkl
+süresi 9949s→12173s, yeni `setup` 178-260s/`prove` 245-272s, ilk
+koşumdan bile yavaş). Bu, anvil'in bellek şişmesinin bu 2-4× süre
+farkının sebebi OLMADIĞININ kesin kanıtı. Devre istatistikleri
+(logrows=19, num_rows=293916, pk=2517MB) 60 ispatın HEPSİNDE BİREBİR
+AYNI — ağırlık/devre-boyutu hipotezi de zaten madde 6'da elenmişti.
+Geriye kalan tek açıklama: Colab'ın paylaşımlı sanal makine
+altyapısındaki CPU değişkenliği (yavaş ölçümler ardışık kümeler halinde
+geliyor — makine durumuna işaret ediyor, ispatın kendisine değil).
+**`docs/phase_e_report.md` nihai sürümüne güncellendi:** ANA TABLO
+artık normalize edilmiş karşılaştırma (77,88s/ispat referansı — tam
+modun 47 sağlıklı + kademeli modun 21 ispatının GERÇEK ortalaması,
+68 örnek), ham toplamlar ikincil/açıklayıcı. Metodolojik not eklendi:
+paylaşımlı bulut ortamlarında mutlak süre güvenilmez, makalenin ana
+iddiası deterministik metriklere (ispat sayısı, gas) dayanmalı — bu
+makalenin sınırlılıklar bölümüne girecek. **Makalenin raporlayacağı
+sayı: %65 tasarruf, hem gas hem normalize süre için geçerli.** Ayrıca
+`run_id`'nin per-kombinasyon `results/{key}.json` dosyasına HİÇ
+yazılmadığı (sadece aggregate dosyaya ekleniyordu) bulunup düzeltildi
+— `run_combo_in_subprocess` artık bu alanı ekleyip dosyayı yeniden
+yazıyor. 13 bozuk-ortam ispatının TEKRAR koşulması ARTIK ÖNERİLMİYOR
+(makine varyansına karşı geçersiz bir çözüm).
 
 **Kabul:** maliyet karşılaştırma tablosu (`docs/phase_e_replay.md`,
-script tarafından üretildi) + yorumlu analiz (`docs/phase_e_report.md`)
-GERÇEK Colab verisiyle üretildi, iki mod da tam koştu, sıfır
-başarısızlık. **KARŞILANDI.**
+script tarafından üretildi) + yorumlu analiz (`docs/phase_e_report.md`,
+nihai sürüm) GERÇEK Colab verisiyle üretildi, üç koşum da (tam,
+kademeli, 13 ispatın yeniden koşumu) sıfır başarısızlıkla tamamlandı,
+raporlanacak sayı (%65) hem gas hem normalize süre için doğrulandı.
+**KARŞILANDI.**
 
 ## Faz F (Colab) — Saldırılar ve canlı koşu
 
