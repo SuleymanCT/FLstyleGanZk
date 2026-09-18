@@ -1,10 +1,15 @@
 # Faz F — Saldırı × Koruma Matrisi (FID/KID/Sınıf-Tutarlılığı)
 
-**Durum: kod yazıldı, Colab'da HENÜZ koşulmadı/doğrulanmadı.** Bu
-doküman, `scripts/run_attacks.py`'nin üreteceği
-`{zk_root}/attacks/attack_results.json`'dan doldurulacak bir
-ŞABLONDUR — CLAUDE.md madde 6 gereği hiçbir FID/KID/sınıf-tutarlılığı
-sayısı burada UYDURULMAZ, gerçek Colab koşumundan SONRA doldurulur.
+**Durum: quick mod Colab'da GEÇTİ (10/10) — norm/ZK sonuçları GERÇEK
+ve KRİTİK bir bulgu içeriyor (aşağıya bakın). FID/KID hâlâ
+KOŞULMADI** (`ref` modunda `--metrics-mode full` ~138 saat sürdüğü
+için pratik değildi — bkz. "Sınırlılık" bölümü ve yeni `--metrics-mode
+custom`). Bu doküman `{zk_root}/attacks/attack_results.json`'dan
+doldurulan bir rapordur — CLAUDE.md madde 6 gereği hiçbir sayı
+UYDURULMAZ; norm/ZK sütunları kullanıcının paylaştığı GERÇEK konsol
+çıktısından, FID/sınıf-tutarlılığı sütunları ise `attack_results.json`
+dosyasının kendisi PAYLAŞILDIĞINDA doldurulacak (bkz. dosya sonundaki
+"Bekleyen veri" notu).
 
 ## Amaç
 
@@ -127,6 +132,44 @@ maliyeti. Düzeltmeler:
   ileri geçişteki ara tensör boyutuydu — bu yüzden "yükleme sonrası
   CPU'ya taşı" için EK bir kod değişikliği GEREKMEDİ (zaten öyleydi).
 
+### 6. `--ops-impl auto` smoke-test'i bir CİHAZ hatasıyla çöktü — CUDA aslında test edilmemişti
+
+Gerçek hata (`RuntimeError: Expected all tensors to be on the same
+device, but got index is on cuda:0, different from other tensors on
+cpu (wrapper_CUDA__index_select)`) bir CUDA DERLEME hatası DEĞİLDİ —
+`resolve_ops_impl`'in smoke-test'i `z`/`c`'yi `device`'a taşırken
+`g_ema`'nın KENDİSİNİ hiç taşımıyordu (`g_ema.to(device)` YOKTU) —
+model CPU'da kalırken girdi GPU'ya gidince embedding/pozisyonel
+tablo gibi bir `index_select` çağrısı çöküyordu. Eski kod bu hatayı
+GENİŞ bir `except Exception` ile yakalayıp "CUDA derlemesi başarısız"
+diye YANLIŞ teşhis edip SESSİZCE `ref`'e düşüyordu — yani CUDA
+GERÇEKTEN çalışıyor olabilirdi ama HİÇ test EDİLEMEMİŞTİ. Düzeltme:
+`resolve_ops_impl` artık smoke-test'ten ÖNCE `g_ema.to(device)`
+çağırıp `eval.metrics.assert_module_on_device` ile TÜM parametre/
+buffer'ların hedef cihazda olduğunu doğruluyor; `is_device_mismatch_error`
+bu SINIF bir hatayı (mesajında "same device" geçen `RuntimeError`)
+gerçek derleme hatalarından AYIRT edip AYRI, net bir hata olarak
+yükseltiyor — bir daha SESSİZCE yanlış teşhis edilip gizlenmiyor.
+**Bu düzeltmeyle CUDA'nın GERÇEKTEN derlenip derlenmediği henüz
+YENİDEN test EDİLMEDİ** — bir sonraki Colab koşumu bunu gösterecek;
+çalışırsa `full` modu saatler yerine dakikalar sürer.
+
+### 7. `ref`'te `full` modu pratik değil (~138 saat) — `--metrics-mode custom` eklendi
+
+Ölçülen `0.498 s/görüntü` (ref, quick mod) ile `estimate_full_mode_cost`
+`--metrics-mode full`'un (5 saldırı × 2 koşul × 2 metrik × 50.000
+görüntü) TOPLAM ~138 saat süreceğini gösterdi — YAPILAMAZ. Eklenen
+alternatif: `--metrics-mode custom --fid-num-gen <N>` (varsayılan
+`N=5000`, kullanıcının önerisi) — `eval.metrics.run_custom_fid_kid`
+StyleGAN-XL'in KENDİ temel fonksiyonlarını (`frechet_inception_distance.compute_fid`,
+`kernel_inception_distance.compute_kid`) DOĞRUDAN çağırır, SADECE
+resmi `metric_main.calc_metric` sarmalayıcısının hardcoded
+`num_gen=50000`'ini atlar (FID/KID mantığı yeniden YAZILMIYOR).
+**Bu sonuç `13.13` referansıyla KARŞILAŞTIRILAMAZ** — dönüş
+değerindeki `fid_comparable_to_reference: False` alanı ve her konsol
+çıktısındaki "13.13 İLE KARŞILAŞTIRILAMAZ" ibaresi bunu HER ÇIKTIDA
+açıkça taşır (kullanıcının "her çıktıda net belirt" isteği).
+
 ## Yöntem
 
 1. `scripts/run_attacks.py`, `--round`'un 4 site'ının GERÇEK
@@ -146,24 +189,77 @@ maliyeti. Düzeltmeler:
    `training_options.json`'dan okunan GERÇEK ayarlarla) + 5×5 sınıf-
    tutarlılığı matrisi hesaplanır.
 
-## ANA TABLO (Colab koşumundan sonra doldurulacak)
+## ANA TABLO — norm/ZK sütunları GERÇEK (quick mod koşumu, 10/10 geçti); FID/KID/sınıf-tutarlılığı PENDING
 
-| saldırı | koşul | ||ΔG|| | tau aşıldı mı (norm) | ZK kapsamda mı | ZK yakaladı mı | FID (fid50k_full) | KID(ort, köşegen) | sınıf tutarlılığı (swap tespit edilen sınıf sayısı) | zehirli site dahil mi |
-|---|---|---|---|---|---|---|---|---|---|
-| random_weights | unprotected | — | — | — | — | — | — | — | evet (kapısız) |
-| random_weights | protected | — | — | — | — | — | — | — | — |
-| scaled_poison_10x | unprotected | — | — | — | — | — | — | — | evet (kapısız) |
-| scaled_poison_10x | protected | — | — | — | — | — | — | — | — |
-| scaled_poison_50x | unprotected | — | — | — | — | — | — | — | evet (kapısız) |
-| scaled_poison_50x | protected | — | — | — | — | — | — | — | — |
-| scaled_poison_100x | unprotected | — | — | — | — | — | — | — | evet (kapısız) |
-| scaled_poison_100x | protected | — | — | — | — | — | — | — | — |
-| conditional_poison | unprotected | — | — | — | — | — | — | — | evet (kapısız) |
-| conditional_poison | protected | — | — | — | — | — | — | — | — |
+`delta_norm`/`norm_caught` GERÇEK Colab ölçümü (kullanıcı tarafından
+raporlandı, `--metrics-mode quick`). `zk_in_scope`/`zk_caught` KOD
+GARANTİSİ (`attacks/detection.py: verify_commitment_consistency`
+aynı state'i kendisiyle karşılaştırıyor — hash eşitliği MATEMATİKSEL
+olarak KESİN, Colab'a özgü bir belirsizlik YOK, bu yüzden "beklenen"
+değil "kesin" olarak işaretleniyor). FID/KID/sınıf-tutarlılığı
+sütunları `{zk_root}/attacks/attack_results.json`'un GERÇEK içeriği
+OLMADAN doldurulamıyor — quick mod class_confusion'ı GERÇEKTEN
+hesaplıyor ama bu doküman o JSON'u henüz OKUMADI (bu oturumda dosyaya
+erişim yok, sadece konsol logundaki özet rakamlar paylaşıldı).
+**Sonraki adım: `attack_results.json`'un içeriği (en azından her 10
+sonucun `class_confusion` alanı) paylaşılırsa bu tablo GERÇEK
+sayılarla tamamlanır — bkz. dosya sonundaki "Bekleyen veri" notu.**
+
+| saldırı | koşul | \|\|ΔG\|\| | tau=3000 aşıldı mı (norm) | ZK kapsamda mı | ZK yakaladı mı | FID | sınıf tutarlılığı | zehirli site dahil mi |
+|---|---|---|---|---|---|---|---|---|
+| random_weights | unprotected | 59592 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | evet (kapısız) |
+| random_weights | protected | 59592 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | HAYIR (norm dışladı) |
+| scaled_poison_10x | unprotected | 25066 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | evet (kapısız) |
+| scaled_poison_10x | protected | 25066 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | HAYIR (norm dışladı) |
+| scaled_poison_50x | unprotected | 125332 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | evet (kapısız) |
+| scaled_poison_50x | protected | 125332 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | HAYIR (norm dışladı) |
+| scaled_poison_100x | unprotected | 250664 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | evet (kapısız) |
+| scaled_poison_100x | protected | 250664 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | HAYIR (norm dışladı) |
+| **conditional_poison** | unprotected | **2507** | **HAYIR** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | evet (kapısız) |
+| **conditional_poison** | protected | **2507** | **HAYIR** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | **EVET (HİÇBİR mekanizma dışlamadı)** |
+
+**KRİTİK SONUÇ (zaten kesinleşti, JSON beklemez):** `conditional_poison`
+protected koşulda bile zehirli siteyi DIŞLAMIYOR — `||ΔG||=2507 <
+tau=3000` olduğundan norm kontrolü geçiyor, ZK zaten tasarım gereği
+hiçbir zaman yakalamıyor (madde 2). Bu, makalenin ANA TEZİ: mevcut
+sistemin norm+ZK savunma katmanı, meşru güncellemelerin doğal
+aralığında saklanan bir sınıf-hedefli saldırıya karşı KÖRDÜR — tau
+KEYFİ değil (Faz A'nın gerçek p99=2518 ölçümünden), ama bu saldırı
+TAM OLARAK o meşru aralığın İÇİNDE kalacak şekilde TASARLANABİLİYOR.
+Tespitin TEK yolu davranışsal/istatistiksel analiz (sınıf-tutarlılığı
+matrisi) — bkz. aşağıdaki "FID vs sınıf-tutarlılığı: hangisi neyi
+gösteriyor".
 
 (Referans: mevcut deneyin korumasız FID'i `13.13` — `fid50k_full`,
 BİREBİR aynı ölçüm ayarlarıyla karşılaştırılabilir olması gerekiyor —
 ama bkz. aşağıdaki "Sınırlılık: `13.13` ile karşılaştırılabilirlik".)
+
+## FID vs sınıf-tutarlılığı: hangisi neyi gösteriyor (item 4 — raporun çerçevesi)
+
+Bu iki metrik BİLEREK FARKLI saldırı sınıflarını yakalamak için var —
+biri diğerinin YERİNE geçmiyor:
+
+- **FID (`fid50k_full`/`--metrics-mode custom`)**: KABA saldırıları
+  gösterir. `random_weights`/`scaled_poison_50x`/`100x` gibi
+  ağırlıkları GÖRÜNÜR şekilde bozan saldırılar, ÜRETILEN GÖRÜNTÜLERİN
+  GENEL KALİTESİNİ/gerçekçiliğini düşürerek FID'i YÜKSELTİR —
+  ama bu saldırılar zaten norm kontrolüyle YAKALANIYOR (yukarıdaki
+  tablo), yani FID'in bunları göstermesi PRATİKTE gerekmiyor bile
+  (savunma zaten önce devreye giriyor).
+- **Sınıf-tutarlılığı matrisi (`class_confusion_matrix`)**: İNCE,
+  HEDEFLİ saldırıyı gösterir. `conditional_poison` görüntü KALİTESİNİ
+  bozmuyor (FID'i muhtemelen DEĞİŞTİRMEZ — görüntüler hâlâ gerçekçi
+  fundus görüntüleri) ama ÜRETİLEN GÖRÜNTÜNÜN SINIF KİMLİĞİNİ
+  bozuyor — bu SADECE sınıf-bazlı bir karşılaştırmayla (üretilen DR-0
+  görüntüsü GERÇEKTE DR-4'e mi benziyor?) görülebilir, tek bir
+  toplam kalite skoruyla (FID) GÖRÜNMEZ.
+
+**Rapor bu çerçeveye göre kuruldu**: yukarıdaki ANA TABLO'nun ilk dört
+saldırısı için "hangi mekanizma yakaladı" sorusunun cevabı zaten norm
+sütunundan OKUNUYOR (FID'e gerek KALMADAN); `conditional_poison`
+satırları için asıl kanıt sınıf-tutarlılığı matrisinin DR-0/DR-4
+karışıklığı gösterip göstermediği — bu, `attack_results.json`
+okunduğunda KESİNLEŞECEK.
 
 ## Sınırlılık: `13.13` ile karşılaştırılabilirlik (`ops_impl` moduna bağlı)
 
@@ -193,24 +289,32 @@ böyle bir karşılaştırma bu oturumda YAPILAMADI). Bu yüzden:
   ayrıca ölçülüp `13.13` ile DOĞRUDAN karşılaştırılarak bu varsayım
   kapatılabilir.
 
-## Beklenen (ama VARSAYILMAYAN, Colab'da doğrulanacak) desen
+## Doğrulanan desen (quick mod, `--metrics-mode quick`, 10/10 koşul geçti)
 
-- `random_weights`/`scaled_poison_50x`/`scaled_poison_100x`: `||ΔG||`
-  büyük olasılıkla `tau=3000`'i AŞAR — norm kontrolü YAKALAR, zehirli
-  site protected koşulda dışlanır.
-- `scaled_poison_10x`: sınırda olabilir — GERÇEK `||ΔG||` ölçülecek,
-  varsayılmıyor.
-- `conditional_poison`: `||ΔG||` NEREDEYSE HİÇ değişmez (tek bir
-  320-boyutlu satır çifti) — norm kontrolü büyük olasılıkla KAÇIRIR.
-  FID muhtemelen düşmez (görüntüler hâlâ gerçekçi). Sınıf-tutarlılığı
-  matrisinde `perceived_class[0]==4` ve `perceived_class[4]==0`
-  (swap) BEKLENİYOR — bu GERÇEKLEŞİRSE, saldırı hem norm hem
-  (madde 2'deki analiz gereği) ZK tarafından KAÇIRILMIŞ ama
-  istatistiksel/davranışsal analizle YAKALANMIŞ olacak.
-- **Madde 2'nin analizi doğruysa**: `zk_caught` SÜTUNU beş saldırının
-  BEŞİ İÇİN DE `False` olacak — bu, "ZK içerik değil tutarlılık
-  kanıtlar" bulgusunun doğrudan kanıtı, ZK'nın olduğundan güçlü
-  gösterilmediğinin garantisi.
+- **`random_weights`/`scaled_poison_10x`/`50x`/`100x`: `||ΔG||`
+  (59592/25066/125332/250664) `tau=3000`'i AÇIKÇA AŞIYOR — norm
+  kontrolü YAKALIYOR, zehirli site protected koşulda dışlanıyor
+  (DOĞRULANDI, artık "beklenen" değil).** `scaled_poison_10x`'in bile
+  (en küçük ölçek) `tau`'nun ~8 katı bir norm ürettiği ÖNEMLİ — bu
+  saldırı ailesi norm kontrolüne karşı hiç "sınırda" değil, RAHATÇA
+  yakalanıyor.
+- **`conditional_poison`: `||ΔG||=2507 < tau=3000` — norm kontrolü
+  KAÇIRIYOR (DOĞRULANDI).** Faz A'nın gerçek p99=2518 ölçümünden
+  seçilen `tau`'nun HEMEN ÜZERİNDE kalıyor — yani bu saldırı,
+  norm eşiğinin keyfi OLMAMASINA RAĞMEN, meşru güncellemelerin doğal
+  aralığında SAKLANABİLİYOR.
+- **`zk_caught` BEŞ saldırının BEŞİ İÇİN DE `False` — bu Colab
+  ölçümüne bağlı DEĞİL, kod garantisi** (`verify_commitment_consistency`
+  bir state'i kendisiyle karşılaştırıyor, hash eşitliği matematiksel
+  olarak KESİN). "ZK içerik değil tutarlılık kanıtlar" bulgusunun
+  doğrudan kanıtı — Colab'da ayrıca DOĞRULANMASI beklenmiyor, zaten
+  kesin.
+- **PENDING (JSON gerekli):** sınıf-tutarlılığı matrisinde
+  `perceived_class[0]==4`/`perceived_class[4]==0` (DR-0/DR-4 swap)
+  görünüyor mu? Bu, `conditional_poison`'ın GERÇEKTEN tespit
+  edilebilir olduğunun kanıtı olacak — `attack_results.json`'un
+  `conditional_poison__unprotected`/`conditional_poison__protected`
+  anahtarlarının `class_confusion` alanı paylaşılırsa KESİNLEŞİR.
 
 ## Dürüstlük noktası (makalede aynen yer almalı)
 
@@ -221,3 +325,24 @@ yeterli DEĞİL, istatistiksel/davranışsal analiz (FID/KID/sınıf-
 tutarlılığı gibi) TAMAMLAYICI bir savunma katmanı olarak GEREKLİ. Bu
 ayrım makalenin "ZK'nın sınırlılıkları" bölümüne AÇIKÇA girmeli —
 ZK'yı olduğundan güçlü göstermemek adına.
+
+## Bekleyen veri (bu turda TAMAMLANAMADI — dosyaya erişim yok)
+
+Bu oturumda `{zk_root}/attacks/attack_results.json`'a DOĞRUDAN erişim
+YOK (Colab/Drive'da duruyor, yerel makineye senkronize değil) —
+sadece konsol logundaki `||ΔG||`/`norm_caught` özeti paylaşıldı. ANA
+TABLO'nun FID/sınıf-tutarlılığı sütunlarını GERÇEK sayılarla
+doldurmak için şunlardan biri gerekiyor:
+
+1. `attack_results.json` dosyasının TAMAMI (10 anahtar — `<saldırı>__<koşul>`),
+   ÖZELLİKLE her kaydın `class_confusion` alanı (`kid_matrix`,
+   `perceived_class`, `swap_detected`), YA DA
+2. En azından `conditional_poison__unprotected`/`conditional_poison__protected`
+   kayıtlarının `class_confusion` alanı — makalenin ana tezi için en
+   kritik olan bu ikisi.
+
+Bu veri paylaşıldığında: ANA TABLO'nun FID/sınıf-tutarlılığı hücreleri
+GERÇEK sayılarla doldurulacak, `perceived_class[0]`/`perceived_class[4]`'ün
+GERÇEKTEN takas gösterip göstermediği KESİNLEŞTİRİLECEK, ve (madde
+7'nin `--metrics-mode custom` koşumu ayrıca yapılırsa) FID sütunu da
+(13.13 ile karşılaştırılamaz notuyla) eklenecek.

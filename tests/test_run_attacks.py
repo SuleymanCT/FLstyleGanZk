@@ -167,3 +167,17 @@ def test_parse_args_accepts_device_and_gen_batch_size_overrides():
     args = parse_args(["--device", "cpu", "--gen-batch-size", "2"])
     assert args.device == "cpu"
     assert args.gen_batch_size == 2
+
+
+def test_parse_args_accepts_custom_metrics_mode_and_fid_num_gen():
+    # Faz F'nin gercek Colab kosumunda 'ref' modunda --metrics-mode full
+    # ~138 saat surdugunden pratik degildi - 'custom' modu bunun icin
+    # eklendi (13.13 ile karsilastirilamaz ama GERCEK bir olcum).
+    args = parse_args(["--metrics-mode", "custom", "--fid-num-gen", "3000"])
+    assert args.metrics_mode == "custom"
+    assert args.fid_num_gen == 3000
+
+
+def test_parse_args_fid_num_gen_defaults_to_none():
+    args = parse_args([])
+    assert args.fid_num_gen is None

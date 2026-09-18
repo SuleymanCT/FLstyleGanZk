@@ -12,9 +12,11 @@ import torch
 
 from eval.metrics import (
     _force_kwarg_wrapper,
+    assert_module_on_device,
     build_fixed_class_batch,
     compute_kid_from_features,
     is_cuda_oom_error,
+    is_device_mismatch_error,
     load_metric_options_from_training_options,
     to_uint8_images,
 )
@@ -210,3 +212,46 @@ def test_is_cuda_oom_error_true_for_real_torch_oom_error_class_if_available():
     if oom_cls is None:
         pytest.skip("bu PyTorch sürümünde torch.cuda.OutOfMemoryError yok")
     assert is_cuda_oom_error(oom_cls("unrelated message")) is True
+
+
+# --- assert_module_on_device / is_device_mismatch_error ---
+# Faz F'nin gerçek Colab koşumunda resolve_ops_impl'in smoke-test'i
+# g_ema'yı device'a TAŞIMADAN çalıştırıyordu: z/c GPU'ya taşınırken
+# g_ema CPU'da kalınca "Expected all tensors to be on the same
+# device ... wrapper_CUDA__index_select" ile çöktü - bu bir CUDA
+# derleme hatası SANILIP sessizce 'ref'e düşülüyordu.
+
+
+class _TinyModuleWithBuffer(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.linear = torch.nn.Linear(4, 4)
+        self.register_buffer("running_stat", torch.zeros(4))
+
+
+def test_assert_module_on_device_passes_when_everything_matches():
+    module = _TinyModuleWithBuffer()
+    assert_module_on_device(module, torch.device("cpu"))  # raise etmemeli
+
+
+def test_assert_module_on_device_raises_when_mismatched():
+    # Gercek CUDA gerektirmeden bir "farkli cihaz" senaryosu kurmak icin
+    # her PyTorch'ta bulunan 'meta' cihazi kullaniliyor - module cpu'da,
+    # beklenen 'meta' - is_cuda_oom_error testlerindeki gibi gercek bir
+    # GPU olmadan da mantigin dogru calistigini kanitliyor.
+    module = _TinyModuleWithBuffer()
+    with pytest.raises(RuntimeError, match="FARKLI cihazda"):
+        assert_module_on_device(module, torch.device("meta"))
+
+
+def test_is_device_mismatch_error_true_for_expected_message():
+    exc = RuntimeError("Expected all tensors to be on the same device, but got index is on cuda:0")
+    assert is_device_mismatch_error(exc) is True
+
+
+def test_is_device_mismatch_error_false_for_unrelated_runtime_error():
+    assert is_device_mismatch_error(RuntimeError("size mismatch")) is False
+
+
+def test_is_device_mismatch_error_false_for_non_runtime_error():
+    assert is_device_mismatch_error(ValueError("same device")) is False

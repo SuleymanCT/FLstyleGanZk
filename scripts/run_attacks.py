@@ -81,8 +81,9 @@ mesajının önerdiği, bellek parçalanmasını azaltan ayar) `torch`
 import edilmeden ÖNCE burada ayarlanıyor.
 
 Kullanım (Colab'da):
-    python -m scripts.run_attacks --env colab --round 10 --metrics-mode quick   # önce ucuz sağlama
-    python -m scripts.run_attacks --env colab --round 10 --metrics-mode full    # resmi fid50k_full/kid50k_full
+    python -m scripts.run_attacks --env colab --round 10 --metrics-mode quick    # önce ucuz sağlama
+    python -m scripts.run_attacks --env colab --round 10 --metrics-mode full     # resmi fid50k_full/kid50k_full ('cuda' çalışıyorsa)
+    python -m scripts.run_attacks --env colab --round 10 --metrics-mode custom --fid-num-gen 5000  # 'ref'te 'full' pratik değilse
     python -m scripts.run_attacks --env colab --round 10 --ops-impl ref         # CUDA derlemesini hiç deneme, doğrudan ref
     python -m scripts.run_attacks --env colab --round 10 --device cpu          # GPU'da batch=1 bile OOM verirse
 """
@@ -108,6 +109,7 @@ from attacks.detection import attack_touches_zk_proven_scope, verify_commitment_
 from attacks.random_weights import randomize_state_dict
 from attacks.scaled_poison import scale_delta
 from configs.loader import load_paths
+from eval.metrics import DEFAULT_CUSTOM_FID_NUM_GEN
 from orchestrator.aggregate import aggregate_round, compute_delta_norm
 from orchestrator.schedule import load_schedule_config
 from scripts.bench_circuit import (
@@ -258,8 +260,20 @@ def resolve_ops_impl(ops_impl_arg: str, *, g_ema, z_dim: int, c_dim: int, device
     (`if impl=='cuda' and x.device.type=='cuda' and _init(): ...`,
     WebFetch ile doğrulandı) zaten CPU tensörlerinde `impl` DEĞERİNDEN
     BAĞIMSIZ olarak ref yoluna düşüyor — `ops_impl='ref'` DOĞRUDAN
-    döndürülür (test etmeye gerek yok, sonuç zaten kesin)."""
-    from eval.metrics import force_stylegan_ops_impl, generate_class_images
+    döndürülür (test etmeye gerek yok, sonuç zaten kesin).
+
+    **Gerçek Colab bulgusu (düzeltildi):** smoke-test önceden `g_ema`'yı
+    `device`'a TAŞIMADAN çalıştırılıyordu — `z`/`c` GPU'ya taşınırken
+    `g_ema` CPU'da kalınca `RuntimeError: Expected all tensors to be
+    on the same device (... wrapper_CUDA__index_select)` ile
+    çöküyordu; bu bir CUDA DERLEME hatası DEĞİLDİ (bir kod hatasıydı),
+    ama eski kod bunu "derleme başarısız" sanıp SESSİZCE `ref`'e
+    düşüyordu — CUDA aslında ÇALIŞIYOR olabilirdi. Artık `g_ema.to(device)`
+    smoke-test'ten ÖNCE çağrılıp `assert_module_on_device` ile
+    doğrulanıyor; `is_device_mismatch_error` gerçek bir cihaz hatasını
+    derleme hatasından AYIRT edip AYRI, net bir hata olarak yükseltiyor
+    (sessizce ref'e düşürmüyor — bu sınıf hata bir daha GİZLENMESİN)."""
+    from eval.metrics import assert_module_on_device, force_stylegan_ops_impl, generate_class_images, is_device_mismatch_error
 
     if device.type == "cpu":
         print("[run_attacks] device=cpu: CUDA custom op'ları CPU tensörlerinde zaten devre dışı — ops_impl='ref' (smoke-test atlandı).")
@@ -270,11 +284,19 @@ def resolve_ops_impl(ops_impl_arg: str, *, g_ema, z_dim: int, c_dim: int, device
         return ops_impl_arg
 
     print("[run_attacks] --ops-impl auto: CUDA custom op derlemesi küçük bir deneme üretimiyle test ediliyor...")
+    g_ema.to(device)
+    assert_module_on_device(g_ema, device)
     try:
         generate_class_images(g_ema, class_index=0, c_dim=c_dim, z_dim=z_dim, num_images=1, device=device, batch_size=1)
         print("[run_attacks] --ops-impl auto: CUDA custom op'ları ÇALIŞIYOR, 'cuda' kullanılacak.")
         return "cuda"
-    except Exception as e:  # noqa: BLE001 - CUDA derleme hatasi COK CESITLI olabilir (ModuleNotFoundError, RuntimeError, ninja hatasi...), hepsi ayni sekilde ref'e dusurulmeli
+    except Exception as e:  # noqa: BLE001 - CUDA derleme hatasi COK CESITLI olabilir (ModuleNotFoundError, RuntimeError, ninja hatasi...), hepsi ayni sekilde ref'e dusurulmeli - CIHAZ hatasi AYRI ele alinir (asagida)
+        if is_device_mismatch_error(e):
+            raise RuntimeError(
+                f"[run_attacks] --ops-impl auto smoke-test'i bir CİHAZ UYUŞMAZLIĞI hatasıyla çöktü: {e} — "
+                f"bu bir CUDA DERLEME hatası DEĞİL, kodda bir cihaz yerleştirme hatası (regresyon). "
+                f"'ref'e sessizce düşülmüyor — kaynağı bulunup düzeltilmeli."
+            ) from e
         print(
             f"[run_attacks] UYARI: --ops-impl auto: CUDA custom op derlemesi BAŞARISIZ "
             f"({type(e).__name__}: {e}) — 'ref' (saf PyTorch referans) uygulamasına DÜŞÜLÜYOR. "
@@ -295,11 +317,16 @@ def evaluate_condition(
     metrics_mode: str,
     device,
     gen_batch_size: int,
+    fid_num_gen: int,
 ) -> dict:
     """Bir (saldırı,koşul) çiftinin GERÇEK global ağırlığını `g_ema_shell`'e
-    yükleyip FID/KID (`--metrics-mode full`) + sınıf-tutarlılığı
-    matrisini hesaplar."""
-    from eval.metrics import class_confusion_matrix, run_official_metric
+    yükleyip FID/KID (`--metrics-mode full`/`custom`) + sınıf-tutarlılığı
+    matrisini hesaplar. `custom` modu — `ref`'te `full`'un 50k
+    görüntüsü pratik OLMADIĞINDA — `eval.metrics.run_custom_fid_kid`
+    ile YAPILANDIRILABİLİR (`fid_num_gen`) bir örnekle GERÇEK bir
+    FID/KID hesaplar, ama sonucu `13.13` referansıyla KIYASLANAMAZ
+    olarak (`fid_comparable_to_reference=False`) İŞARETLER."""
+    from eval.metrics import class_confusion_matrix, run_custom_fid_kid, run_official_metric
 
     t0 = time.perf_counter()
     g_ema_shell.load_state_dict(global_state)
@@ -316,10 +343,22 @@ def evaluate_condition(
             result.update(metric_result)
             result[f"{metric_name}_seconds"] = time.perf_counter() - t_metric
             print(f"[run_attacks]   {metric_name}: {metric_result} ({result[f'{metric_name}_seconds']:.1f}s)")
+    elif metrics_mode == "custom":
+        t_metric = time.perf_counter()
+        custom_result = run_custom_fid_kid(
+            g_ema_shell, dataset_kwargs=metric_options["dataset_kwargs"], num_gpus=metric_options["num_gpus"],
+            device=device, num_gen=fid_num_gen,
+        )
+        result.update(custom_result)
+        print(
+            f"[run_attacks]   ÖZEL FID/KID (num_gen={fid_num_gen}, 13.13 İLE KARŞILAŞTIRILAMAZ): "
+            f"fid_custom={custom_result['fid_custom']:.3f} kid_custom={custom_result['kid_custom']:.5f} "
+            f"({time.perf_counter() - t_metric:.1f}s)"
+        )
     else:
         print("[run_attacks]   --metrics-mode quick: resmi fid50k_full/kid50k_full ATLANDI (sadece sınıf-tutarlılığı koşuluyor).")
 
-    num_images_per_class = FULL_CLASS_IMAGES_PER_CLASS if metrics_mode == "full" else QUICK_CLASS_IMAGES_PER_CLASS
+    num_images_per_class = QUICK_CLASS_IMAGES_PER_CLASS if metrics_mode == "quick" else FULL_CLASS_IMAGES_PER_CLASS
     t_confusion = time.perf_counter()
     confusion = class_confusion_matrix(
         g_ema_shell, dataset_kwargs=metric_options["dataset_kwargs"], num_classes=DR_NUM_CLASSES,
@@ -348,9 +387,17 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--dataset-root", default=None, help="training_options.json'daki dataset yolu bu makinede geçersizse, yeniden konumlandırma kökü")
     parser.add_argument("--attacks-dir", default=None, help="varsayılan: {zk_root}/attacks")
     parser.add_argument(
-        "--metrics-mode", default="full", choices=["full", "quick"],
-        help="'full': resmi fid50k_full/kid50k_full (saatler sürebilir, 5 saldırı x 2 koşul x 50k görüntü). "
-             "'quick': FID/KID ATLANIR, sadece küçük örnekli sınıf-tutarlılığı koşulur (dakikalar, önce sağlama için).",
+        "--metrics-mode", default="full", choices=["full", "quick", "custom"],
+        help="'full': resmi fid50k_full/kid50k_full (saatler sürebilir, 5 saldırı x 2 koşul x 50k görüntü — "
+             "'ref' modunda GENELLİKLE PRATİK DEĞİL, bkz. koşum başındaki maliyet ekstrapolasyonu). "
+             "'quick': FID/KID ATLANIR, sadece küçük örnekli sınıf-tutarlılığı koşulur (dakikalar, önce sağlama için). "
+             "'custom': GERÇEK ama küçük örnekli (--fid-num-gen) bir FID/KID — 13.13 İLE KARŞILAŞTIRILAMAZ, "
+             "SADECE bu koşumun kendi saldırı×koruma karşılaştırması için.",
+    )
+    parser.add_argument(
+        "--fid-num-gen", type=int, default=None,
+        help=f"'--metrics-mode custom' için üretilecek görüntü sayısı (varsayılan: {DEFAULT_CUSTOM_FID_NUM_GEN}). "
+             f"13.13 referansı 50000 ile ölçüldü — bu değer KÜÇÜLTÜLDÜKÇE karşılaştırılamazlık ARTAR.",
     )
     parser.add_argument("--only-attack", default=None, help="virgülle ayrılmış saldırı adı listesi — sadece bunları koştur (bkz. ATTACK_NAMES)")
     parser.add_argument("--force", action="store_true", help="zaten sonuçlanmış (saldırı,koşul) çiftlerini yeniden çalıştır")
@@ -395,7 +442,8 @@ def main(argv=None) -> int:
     if unknown:
         raise ValueError(f"Bilinmeyen saldırı adı/ları: {unknown}. Geçerli: {ATTACK_NAMES}")
 
-    print(f"[run_attacks] round={args.round} poisoned_site={args.poisoned_site} attacks={attack_names} metrics_mode={args.metrics_mode}")
+    fid_num_gen = args.fid_num_gen or DEFAULT_CUSTOM_FID_NUM_GEN
+    print(f"[run_attacks] round={args.round} poisoned_site={args.poisoned_site} attacks={attack_names} metrics_mode={args.metrics_mode} fid_num_gen={fid_num_gen}")
 
     if args.device == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -465,6 +513,7 @@ def main(argv=None) -> int:
                 global_state=aggregation["global_state"], g_ema_shell=g_ema_shell, dims=dims,
                 metric_options=metric_options, dataset_root_override=args.dataset_root,
                 metrics_mode=args.metrics_mode, device=device, gen_batch_size=gen_batch_size,
+                fid_num_gen=fid_num_gen,
             )
 
             all_results[key] = {
@@ -497,10 +546,10 @@ def main(argv=None) -> int:
                         f"TOPLAM ({cost['num_conditions']} koşul) ~{cost['hours_total']:.1f} saat "
                         f"(SADECE görüntü üretimi — Inception özellik çıkarımı/KID hesaplaması HARİÇ, ek zaman gerektirir). "
                         f"Bu pratik olmayabilir — alternatifler: (a) --only-attack ile saldırı sayısını azalt, "
-                        f"(b) daha az riskli olsa da resmi fid50k_full yerine daha küçük bir num_gen ile özel bir "
-                        f"ölçüm (mevcut ayarlarla karşılaştırılabilirliği bozar, dikkatli kullanılmalı), "
-                        f"(c) CUDA custom op derlemesini bu Colab ortamında (farklı PyTorch/CUDA sürümü, "
-                        f"ör. `pip install torch==<uyumlu sürüm>`) çalışır hale getirmeyi dene."
+                        f"(b) '--metrics-mode custom --fid-num-gen {DEFAULT_CUSTOM_FID_NUM_GEN}' ile GERÇEK ama küçük "
+                        f"örnekli bir FID/KID (13.13 İLE KARŞILAŞTIRILAMAZ, ama bu koşumun kendi saldırı×koruma "
+                        f"karşılaştırması için yeterli), (c) CUDA custom op derlemesini bu Colab ortamında (farklı "
+                        f"PyTorch/CUDA sürümü, ör. `pip install torch==<uyumlu sürüm>`) çalışır hale getirmeyi dene."
                     )
 
         del poisoned_state, site_states

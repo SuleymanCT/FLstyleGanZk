@@ -30,6 +30,7 @@ ve gerçek APTOS/DR veri kümesi gerektiren fonksiyonlar (`run_official_metric`,
 çalışır/test edilir. Saf/dosya-tabanlı yardımcılar
 (`load_metric_options_from_training_options`, `compute_kid_from_features`,
 `build_fixed_class_batch`, `to_uint8_images`, `is_cuda_oom_error`,
+`is_device_mismatch_error`, `assert_module_on_device`,
 `_force_kwarg_wrapper`) `tests/test_metrics.py`'de yerelde GERÇEKTEN
 test edilir.
 """
@@ -165,6 +166,43 @@ def build_fixed_class_batch(batch_size: int, class_index: int, z_dim: int, c_dim
     return z, c
 
 
+def assert_module_on_device(module, device) -> None:
+    """`module`'ün TÜM parametrelerinin VE buffer'larının (`.to(device)`'ın
+    GERÇEKTEN her ikisini de taşıdığını VARSAYMAZ, TEK TEK kontrol
+    eder) `device`'ta olduğunu doğrular.
+
+    Gerçek Colab koşumunda `g_ema` (shell modül) CPU'da kalırken
+    `z`/`c` GPU'ya taşınmış, `RuntimeError: Expected all tensors to
+    be on the same device, but got index is on cuda:0, different
+    from other tensors on cpu (wrapper_CUDA__index_select)` ile
+    çökülmüştü — kök sebep `resolve_ops_impl`'in smoke-test'i
+    `g_ema.to(device)` çağırmadan çalıştırmasıydı. Bu fonksiyon bu
+    sınıf hatayı, model çağrılmadan ÖNCE, net bir hata mesajıyla
+    yakalar."""
+    mismatched = [
+        (name, str(tensor.device))
+        for name, tensor in list(module.named_parameters()) + list(module.named_buffers())
+        if tensor.device.type != device.type
+    ]
+    if mismatched:
+        preview = mismatched[:10]
+        suffix = "..." if len(mismatched) > 10 else ""
+        raise RuntimeError(
+            f"'{device}' bekleniyordu ama {len(mismatched)} parametre/buffer FARKLI cihazda: "
+            f"{preview}{suffix} — 'module.to(device)' eksik/etkisiz kalmış olabilir."
+        )
+
+
+def is_device_mismatch_error(exc: BaseException) -> bool:
+    """`RuntimeError`'ın mesajında "aynı cihaz" hatasının imzası
+    ("same device") geçiyor mu — bu bir CUDA DERLEME hatası DEĞİL,
+    kodda bir cihaz yerleştirme HATASI, `resolve_ops_impl`'in
+    "derleme başarısız, ref'e düş" mantığıyla YANLIŞ teşhis edilip
+    SESSİZCE ref'e düşülmesi (asıl hatayı GİZLEYEREK) yerine AYRI,
+    net bir hata olarak yükseltilmesi gerekir."""
+    return isinstance(exc, RuntimeError) and "same device" in str(exc).lower()
+
+
 def _force_kwarg_wrapper(original_fn, kwarg_name: str, kwarg_value):
     """`original_fn`'i, HER çağrıda `kwarg_name=kwarg_value`'yu
     ZORLAYAN bir sarmalayıcıya çevirir — çağıran taraf o kwarg'ı hiç
@@ -255,6 +293,48 @@ def run_official_metric(metric_name: str, g_ema, *, dataset_kwargs: dict, num_gp
 
     result = metric_main.calc_metric(metric_name, G=g_ema, dataset_kwargs=dataset_kwargs, num_gpus=num_gpus, rank=0, device=device)
     return dict(result.results)
+
+
+DEFAULT_CUSTOM_FID_NUM_GEN = 5000
+
+
+def run_custom_fid_kid(g_ema, *, dataset_kwargs: dict, num_gpus: int = 1, device=None, num_gen: int = DEFAULT_CUSTOM_FID_NUM_GEN) -> dict:
+    """`ref` modunda `fid50k_full`/`kid50k_full`'un SABİT `num_gen=50000`'i
+    pratik OLMADIĞINDA (bkz. `scripts/run_attacks.py: estimate_full_mode_cost`)
+    kullanılan alternatif — StyleGAN-XL'in KENDİ temel fonksiyonlarını
+    (`metrics.frechet_inception_distance.compute_fid`,
+    `metrics.kernel_inception_distance.compute_kid`) DOĞRUDAN çağırır,
+    SADECE resmi `metric_main.calc_metric` sarmalayıcısının hardcoded
+    `num_gen=50000`'ini atlar — FID/KID hesaplama mantığı burada da
+    YENİDEN YAZILMIYOR.
+
+    **UYARI — bu sonuç `fid50k_full=13.13` referansıyla KARŞILAŞTIRILAMAZ**
+    (farklı örnek sayısı → farklı istatistiksel güven/varyans). SADECE
+    bu script'in KENDİ saldırı×koruma matrisinin İÇ karşılaştırması
+    için kullanılmalı — dönüş değerindeki `fid_comparable_to_reference:
+    False` alanı bunu HER ÇIKTIDA açıkça taşır, çağıran taraf bunu
+    sessizce göz ardı edemez."""
+    from metrics import frechet_inception_distance, kernel_inception_distance, metric_utils
+
+    opts = metric_utils.MetricOptions(G=g_ema, dataset_kwargs=dataset_kwargs, num_gpus=num_gpus, rank=0, device=device)
+
+    t0 = time.perf_counter()
+    fid = frechet_inception_distance.compute_fid(opts, max_real=None, num_gen=num_gen)
+    fid_seconds = time.perf_counter() - t0
+
+    max_subset_size = min(num_gen, 1000)
+    t0 = time.perf_counter()
+    kid = kernel_inception_distance.compute_kid(opts, max_real=min(num_gen, 1_000_000), num_gen=num_gen, num_subsets=100, max_subset_size=max_subset_size)
+    kid_seconds = time.perf_counter() - t0
+
+    return {
+        "fid_custom": fid,
+        "fid_custom_seconds": fid_seconds,
+        "kid_custom": kid,
+        "kid_custom_seconds": kid_seconds,
+        "custom_num_gen": num_gen,
+        "fid_comparable_to_reference": False,
+    }
 
 
 def get_feature_detector(device):

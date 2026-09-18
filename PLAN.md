@@ -1210,6 +1210,64 @@ DEĞİL, `ref` yolunun TEK geçişteki ara tensör boyutuydu — ek bir
 (`is_cuda_oom_error`×4, `pick_default_gen_batch_size`×3, CLI×2)
 yerelde doğrulandı. Tam paket: 349 passed, 2 skipped.
 
+**4. Colab koşumu — quick mod 10/10 geçti, KRİTİK bulgu + bir kod
+hatası daha bulundu:**
+
+**Kritik bulgu (GERÇEK, makalenin ana tezi):** `||ΔG||` — random_weights
+59592, scaled_poison_10x/50x/100x 25066/125332/250664 (hepsi
+`tau=3000`'i AÇIKÇA aşıyor, norm kontrolü yakalıyor) — ama
+**`conditional_poison`: `||ΔG||=2507 < tau=3000`, norm kontrolü
+KAÇIRIYOR.** `tau` keyfi değil (Faz A'nın gerçek p99=2518 ölçümünden)
+ama bu saldırı TAM OLARAK o meşru aralığın içinde kalacak şekilde
+inşa edilebiliyor — mevcut norm+ZK savunma katmanı bu sınıf saldırıya
+KÖR. `zk_caught` beş saldırının BEŞİ için de `False` — bu Colab'a
+bağlı değil, `verify_commitment_consistency`'nin bir state'i
+kendisiyle karşılaştırmasından doğan KOD GARANTİSİ (matematiksel
+kesinlik, ayrıca doğrulanması gerekmiyor).
+
+**Bulunan kod hatası:** `--ops-impl auto` smoke-test'i
+`RuntimeError: Expected all tensors to be on the same device (...
+wrapper_CUDA__index_select)` ile çöktü — bu bir CUDA DERLEME hatası
+DEĞİLDİ, `resolve_ops_impl` `z`/`c`'yi `device`'a taşırken `g_ema`'nın
+KENDİSİNİ hiç taşımıyordu, eski kod bunu geniş `except Exception` ile
+yakalayıp "derleme başarısız" diye YANLIŞ teşhis edip SESSİZCE ref'e
+düşüyordu — CUDA GERÇEKTEN çalışıyor olabilirdi ama hiç test
+EDİLEMEMİŞTİ. **Düzeltme:** `resolve_ops_impl` artık smoke-test'ten
+ÖNCE `g_ema.to(device)` çağırıp `eval.metrics.assert_module_on_device`
+(TÜM parametre+buffer'ları tek tek kontrol eder) ile doğruluyor;
+`is_device_mismatch_error` bu SINIF hatayı gerçek derleme
+hatalarından AYIRT edip AYRI, net bir hata olarak yükseltiyor (bir
+daha sessizce yanlış teşhis edilmiyor). **CUDA'nın bu düzeltmeyle
+GERÇEKTEN çalışıp çalışmadığı henüz YENİDEN test EDİLMEDİ** — bir
+sonraki Colab koşumu gösterecek.
+
+**Pratiklik sorunu + çözüm:** ölçülen `0.498 s/görüntü` (ref, quick
+mod) ile `estimate_full_mode_cost` `--metrics-mode full`'un TOPLAM
+~138 saat süreceğini gösterdi — yapılamaz. `--metrics-mode custom
+--fid-num-gen <N>` (varsayılan 5000) eklendi —
+`eval.metrics.run_custom_fid_kid` StyleGAN-XL'in KENDİ
+`frechet_inception_distance.compute_fid`/`kernel_inception_distance.compute_kid`
+fonksiyonlarını DOĞRUDAN çağırıp SADECE resmi sarmalayıcının
+hardcoded `num_gen=50000`'ini atlıyor (mantık yeniden yazılmıyor);
+sonuç `fid_comparable_to_reference=False` alanıyla VE her konsol
+çıktısında "13.13 İLE KARŞILAŞTIRILAMAZ" notuyla işaretleniyor.
+
+**Rapor çerçevesi (madde 4):** FID kaba saldırıları (zaten norm
+kontrolüyle yakalanan) gösterir; sınıf-tutarlılığı matrisi
+`conditional_poison`'ın FID'de GÖRÜNMEYEN asıl zararını gösterir —
+`docs/phase_f_attacks.md` bu ayrıma göre yeniden çerçevelendi, GERÇEK
+norm/ZK sayılarıyla dolduruldu.
+
+**Tamamlanamayan (madde 5):** `attack_results.json`'a bu oturumda
+erişim yok (Colab/Drive'da, yerel makineye senkron değil) —
+`conditional_poison`'ın sınıf-tutarlılığı matrisinin GERÇEKTEN DR-0/DR-4
+takasını gösterip göstermediği bu dosyanın (en azından
+`class_confusion` alanlarının) paylaşılmasını bekliyor; doküman bunu
+"Bekleyen veri" olarak AÇIKÇA işaretliyor, uydurmadı.
+
+7 yeni saf test (`assert_module_on_device`×2, `is_device_mismatch_error`×3,
+CLI×2) yerelde doğrulandı. Tam paket: 356 passed, 2 skipped.
+
 **Kabul (İKİ ayrı madde):**
 1. Saldırı × koruma matrisi (bu bölüm) — **HENÜZ KARŞILANMADI**, Colab
    koşumu bekleniyor.
