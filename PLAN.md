@@ -1073,7 +1073,8 @@ raporlanacak sayı (%65) hem gas hem normalize süre için doğrulandı.
 
 ## Faz F (Colab) — Saldırı × koruma matrisi
 
-**durum: kod yazıldı, Colab'da HENÜZ koşulmadı/doğrulanmadı.**
+**durum: saldırı × koruma matrisi (quick mod) TAMAMLANDI — GERÇEK Colab
+verisi; FID/KID ölçülmedi; canlı entegre koşu kapsam dışı.**
 
 Kullanıcının bu fazı detaylandıran talimatı, PLAN.md'nin eski kısa
 taslağının YERİNE geçti (bkz. `docs/phase_f_attacks.md`'nin "Tasarım
@@ -1313,8 +1314,30 @@ fallback'te TAM traceback basıp `ops_impl_fallback_error` olarak JSON'a
 yazıyor (gerçek mesaj Colab logundan bekleniyor). Testler: 367 passed,
 2 skipped.
 
+**7. Kompanzasyon Colab'da koşuldu — ANA SONUÇ (rapor
+`docs/phase_f_attacks.md` GERÇEK sayılarla dolduruldu):**
+`conditional_poison_compensated`: ‖ΔG‖=2519,53 (tau=3000), doğal kayma
+2506,64, saldırı katkısı 255,33 → toplam norm yalnızca %0,5 büyüdü,
+`norm_caught=False`. Koşullu zehirleme FedAvg seyrelmesi telafi edilse
+bile norm savunmasının görüş alanı dışında; tau Faz A'nın p99=2518
+dağılımından seçildiğinden eşiği düşürmek meşru güncellemeleri de eler.
+DR-4 satırı (DR-4 istenen): basit FedAvg 1,27 (DR-0'a 0,0667 / DR-4'e
+0,0846) → telafili FedAvg 2,37 (0,0453 / 0,1075); telafili tek başına
+6,16 (0,0096 / 0,0591); `perceived_class[4]=0` her durumda. Takasın iki
+yönü asimetrik (DR-0 üretimi bozuluyor ama DR-4'e kaymıyor) — raporda
+not. ZK çerçevesi: yakalamıyor ve mimari olarak beklenmiyor
+(taahhüt/ispat/katkı tutarlılığı, içerik denetimi değil); değeri
+denetlenen şeyin katkıda bulunulanla aynı olmasını garanti etmek.
+**CUDA kapandı:** gerçek derleme hatası (`ModuleNotFoundError: No module
+named 'bias_act_plugin'`), `ref` kalıcı, hata raporda verbatim.
+**Sınırlılıklar:** FID ölçülmedi (`ref`'te ~13,8 sa/koşul; `--metrics-mode
+custom --fid-num-gen 5000` ≈1,4 sa/koşul, tam 18 koşul ≈25 sa, makul
+alt küme ≈8–9 sa); saldırısız temel matris yok; 20 görüntü/sınıf, tek
+tohum; tek round/site.
+
 **Kabul (İKİ ayrı madde):**
-1. Saldırı × koruma matrisi (bu bölüm) — **HENÜZ KARŞILANMADI**, Colab
-   koşumu bekleniyor.
+1. Saldırı × koruma matrisi (norm/ZK/sınıf-tutarlılığı) — **KARŞILANDI
+   (quick mod, GERÇEK Colab verisiyle)**; FID/KID kısmı ölçülmedi
+   (sınırlılık olarak belgelendi).
 2. 3 round canlı entegre koşu — **bu turda hiç ELE ALINMADI**, ayrı
    bir istek/tur gerektirir.

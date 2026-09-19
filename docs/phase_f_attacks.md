@@ -1,21 +1,30 @@
-# Faz F — Saldırı × Koruma Matrisi (FID/KID/Sınıf-Tutarlılığı)
+# Faz F — Saldırı × Koruma Matrisi (norm kapısı / ZK / sınıf-tutarlılığı)
 
-**Durum: quick mod Colab'da GEÇTİ (10/10) — norm/ZK sonuçları GERÇEK
-ve KRİTİK bir bulgu içeriyor (aşağıya bakın). FID/KID hâlâ
-KOŞULMADI** (`ref` modunda `--metrics-mode full` ~138 saat sürdüğü
-için pratik değildi — bkz. "Sınırlılık" bölümü ve yeni `--metrics-mode
-custom`). Bu doküman `{zk_root}/attacks/attack_results.json`'dan
-doldurulan bir rapordur — CLAUDE.md madde 6 gereği hiçbir sayı
-UYDURULMAZ; norm/ZK sütunları kullanıcının paylaştığı GERÇEK konsol
-çıktısından, FID/sınıf-tutarlılığı sütunları ise `attack_results.json`
-dosyasının kendisi PAYLAŞILDIĞINDA doldurulacak (bkz. dosya sonundaki
-"Bekleyen veri" notu).
+**Durum: quick mod Colab'da TAMAMLANDI (6 saldırı × 3 koşul). Norm/ZK
+sonuçları ve sınıf-tutarlılığı matrisleri GERÇEK Colab ölçümüdür. FID/KID
+ÖLÇÜLMEDİ** (`ref` modunda `fid50k_full` koşul başına ~13,8 saat —
+bkz. "Sınırlılıklar"). Hiçbir sayı uydurulmadı (CLAUDE.md madde 6); bu
+dokümandaki tüm rakamlar konsol/JSON çıktısından alınmıştır.
+
+## ANA SONUÇ (özet)
+
+**Koşullu (sınıf-hedefli) zehirleme, FedAvg seyrelmesini telafi edecek
+kadar güçlendirilse BİLE norm tabanlı savunmanın görüş alanı dışında
+kalıyor.** Telafili saldırının ‖ΔG‖'si 2519,53 (tau=3000'in ALTINDA); saldırının
+kendi katkısı yalnızca 255,33, sitenin doğal eğitim kaymasının (2506,64)
+yanında gürültü seviyesinde — toplam normu %0,5 büyütüyor. `tau`
+keyfi değil, Faz A'nın gerçek ‖ΔG‖ dağılımından (p99=2518, n=56)
+seçildi: eşiği bu saldırıyı yakalayacak kadar (yaklaşık 2519'un altına)
+düşürmek meşru güncellemelerin ~%1'ini (p99'un tanımı gereği) — ve bu
+sitenin kendi doğal kaymasını (2506,64) — de eleyecektir. Savunmanın ZK
+kısmı ise bu saldırıyı yakalamıyor ve mimari olarak yakalaması da
+BEKLENMİYOR (aşağıda).
 
 ## Amaç
 
 ZK doğrulamasının + norm kontrolünün zehirleme saldırılarını
 GERÇEKTEN engelleyip engellemediğini, ölçülebilir FID/KID/sınıf-
-tutarlılığı metrikleriyle göstermek. Üç saldırı, DÖRT sitenin biri
+tutarlılığı metrikleriyle göstermek. Altı saldırı varyantı, DÖRT sitenin biri
 üzerinde, AĞIRLIK SEVİYESİNDE simüle edilir — hiçbir model eğitilmez
 (CLAUDE.md madde 2/3/6): `attacks/random_weights.py`,
 `attacks/scaled_poison.py` (10x/50x/100x), `attacks/conditional_poison.py`.
@@ -150,9 +159,11 @@ buffer'ların hedef cihazda olduğunu doğruluyor; `is_device_mismatch_error`
 bu SINIF bir hatayı (mesajında "same device" geçen `RuntimeError`)
 gerçek derleme hatalarından AYIRT edip AYRI, net bir hata olarak
 yükseltiyor — bir daha SESSİZCE yanlış teşhis edilip gizlenmiyor.
-**Bu düzeltmeyle CUDA'nın GERÇEKTEN derlenip derlenmediği henüz
-YENİDEN test EDİLMEDİ** — bir sonraki Colab koşumu bunu gösterecek;
-çalışırsa `full` modu saatler yerine dakikalar sürer.
+**SONUÇ (Colab'da doğrulandı, KAPANDI):** düzeltmeden sonra smoke-test
+GERÇEK derleme hatasıyla düştü — `Setting up PyTorch plugin
+"bias_act_plugin"... Failed!` / `ModuleNotFoundError: No module named
+'bias_act_plugin'` (cihaz sorunu DEĞİL). CUDA custom op'ları bu
+ortamda derlenemiyor; `ref` modu KALICI, bkz. "CUDA meselesi" bölümü.
 
 ### 7. `ref`'te `full` modu pratik değil (~138 saat) — `--metrics-mode custom` eklendi
 
@@ -189,226 +200,171 @@ açıkça taşır (kullanıcının "her çıktıda net belirt" isteği).
    `training_options.json`'dan okunan GERÇEK ayarlarla) + 5×5 sınıf-
    tutarlılığı matrisi hesaplanır.
 
-## ANA TABLO — norm/ZK sütunları GERÇEK (quick mod koşumu, 10/10 geçti); FID/KID/sınıf-tutarlılığı PENDING
 
-`delta_norm`/`norm_caught` GERÇEK Colab ölçümü (kullanıcı tarafından
-raporlandı, `--metrics-mode quick`). `zk_in_scope`/`zk_caught` KOD
-GARANTİSİ (`attacks/detection.py: verify_commitment_consistency`
-aynı state'i kendisiyle karşılaştırıyor — hash eşitliği MATEMATİKSEL
-olarak KESİN, Colab'a özgü bir belirsizlik YOK, bu yüzden "beklenen"
-değil "kesin" olarak işaretleniyor). FID/KID/sınıf-tutarlılığı
-sütunları `{zk_root}/attacks/attack_results.json`'un GERÇEK içeriği
-OLMADAN doldurulamıyor — quick mod class_confusion'ı GERÇEKTEN
-hesaplıyor ama bu doküman o JSON'u henüz OKUMADI (bu oturumda dosyaya
-erişim yok, sadece konsol logundaki özet rakamlar paylaşıldı).
-**Sonraki adım: `attack_results.json`'un içeriği (en azından her 10
-sonucun `class_confusion` alanı) paylaşılırsa bu tablo GERÇEK
-sayılarla tamamlanır — bkz. dosya sonundaki "Bekleyen veri" notu.**
+## Ana tablo — norm kapısı (tau=3000, GERÇEK ölçüm)
 
-| saldırı | koşul | \|\|ΔG\|\| | tau=3000 aşıldı mı (norm) | ZK kapsamda mı | ZK yakaladı mı | FID | sınıf tutarlılığı | zehirli site dahil mi |
-|---|---|---|---|---|---|---|---|---|
-| random_weights | unprotected | 59592 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | evet (kapısız) |
-| random_weights | protected | 59592 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | HAYIR (norm dışladı) |
-| scaled_poison_10x | unprotected | 25066 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | evet (kapısız) |
-| scaled_poison_10x | protected | 25066 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | HAYIR (norm dışladı) |
-| scaled_poison_50x | unprotected | 125332 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | evet (kapısız) |
-| scaled_poison_50x | protected | 125332 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | HAYIR (norm dışladı) |
-| scaled_poison_100x | unprotected | 250664 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | evet (kapısız) |
-| scaled_poison_100x | protected | 250664 | **EVET** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | HAYIR (norm dışladı) |
-| **conditional_poison** | unprotected | **2507** | **HAYIR** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | evet (kapısız) |
-| **conditional_poison** | protected | **2507** | **HAYIR** | evet | HAYIR (kod garantisi) | (JSON gerekli) | (JSON gerekli) | **EVET (HİÇBİR mekanizma dışlamadı)** |
+| saldırı | ‖ΔG‖ | tau'ya oran | norm kapısı | sonuç |
+|---|---|---|---|---|
+| random_weights | 59 592 | 19,9× | YAKALADI | zehirli site dışlandı |
+| scaled_poison_10x | 25 066 | 8,4× | YAKALADI | zehirli site dışlandı |
+| scaled_poison_50x | 125 332 | 41,8× | YAKALADI | zehirli site dışlandı |
+| scaled_poison_100x | 250 664 | 83,6× | YAKALADI | zehirli site dışlandı |
+| conditional_poison (basit takas) | 2 507 | 0,84× | GEÇTİ | site dahil; FedAvg'da sinyal seyreliyor |
+| conditional_poison_compensated | 2 519,53 | 0,84× | GEÇTİ | site dahil; FedAvg'da sinyal korunuyor |
 
-**KRİTİK SONUÇ (zaten kesinleşti, JSON beklemez):** `conditional_poison`
-protected koşulda bile zehirli siteyi DIŞLAMIYOR — `||ΔG||=2507 <
-tau=3000` olduğundan norm kontrolü geçiyor, ZK zaten tasarım gereği
-hiçbir zaman yakalamıyor (madde 2). Bu, makalenin ANA TEZİ: mevcut
-sistemin norm+ZK savunma katmanı, meşru güncellemelerin doğal
-aralığında saklanan bir sınıf-hedefli saldırıya karşı KÖRDÜR — tau
-KEYFİ değil (Faz A'nın gerçek p99=2518 ölçümünden), ama bu saldırı
-TAM OLARAK o meşru aralığın İÇİNDE kalacak şekilde TASARLANABİLİYOR.
-Tespitin TEK yolu davranışsal/istatistiksel analiz (sınıf-tutarlılığı
-matrisi) — bkz. aşağıdaki "FID vs sınıf-tutarlılığı: hangisi neyi
-gösteriyor".
+ZK sütunu bilerek ayrı yazılmadı: `zk_caught` altı saldırının HEPSİ için
+`False` ve bu bir Colab ölçümü değil KOD GARANTİSİ
+(`verify_commitment_consistency` bir state'i kendisiyle karşılaştırır) —
+bkz. "ZK'nın doğru çerçevesi".
 
-(Referans: mevcut deneyin korumasız FID'i `13.13` — `fid50k_full`,
-BİREBİR aynı ölçüm ayarlarıyla karşılaştırılabilir olması gerekiyor —
-ama bkz. aşağıdaki "Sınırlılık: `13.13` ile karşılaştırılabilirlik".)
+### Telafinin ‖ΔG‖ üzerindeki etkisi (aritmetik doğrulaması)
 
-## FID vs sınıf-tutarlılığı: hangisi neyi gösteriyor (item 4 — raporun çerçevesi)
-
-Bu iki metrik BİLEREK FARKLI saldırı sınıflarını yakalamak için var —
-biri diğerinin YERİNE geçmiyor:
-
-- **FID (`fid50k_full`/`--metrics-mode custom`)**: KABA saldırıları
-  gösterir. `random_weights`/`scaled_poison_50x`/`100x` gibi
-  ağırlıkları GÖRÜNÜR şekilde bozan saldırılar, ÜRETILEN GÖRÜNTÜLERİN
-  GENEL KALİTESİNİ/gerçekçiliğini düşürerek FID'i YÜKSELTİR —
-  ama bu saldırılar zaten norm kontrolüyle YAKALANIYOR (yukarıdaki
-  tablo), yani FID'in bunları göstermesi PRATİKTE gerekmiyor bile
-  (savunma zaten önce devreye giriyor).
-- **Sınıf-tutarlılığı matrisi (`class_confusion_matrix`)**: İNCE,
-  HEDEFLİ saldırıyı gösterir. `conditional_poison` görüntü KALİTESİNİ
-  bozmuyor (FID'i muhtemelen DEĞİŞTİRMEZ — görüntüler hâlâ gerçekçi
-  fundus görüntüleri) ama ÜRETİLEN GÖRÜNTÜNÜN SINIF KİMLİĞİNİ
-  bozuyor — bu SADECE sınıf-bazlı bir karşılaştırmayla (üretilen DR-0
-  görüntüsü GERÇEKTE DR-4'e mi benziyor?) görülebilir, tek bir
-  toplam kalite skoruyla (FID) GÖRÜNMEZ.
-
-**Rapor bu çerçeveye göre kuruldu**: yukarıdaki ANA TABLO'nun ilk dört
-saldırısı için "hangi mekanizma yakaladı" sorusunun cevabı zaten norm
-sütunundan OKUNUYOR (FID'e gerek KALMADAN); `conditional_poison`
-satırları için asıl kanıt sınıf-tutarlılığı matrisinin DR-0/DR-4
-karışıklığı gösterip göstermediği — bu, `attack_results.json`
-okunduğunda KESİNLEŞECEK.
-
-## `conditional_poison`'ın sınıf-tutarlılığı matrisi GELDİ — takas GÖRÜNMÜYOR (yeni sorun, araştırılıyor)
-
-Kullanıcının paylaştığı GERÇEK matris (unprotected/protected — Bölüm
-"ANA TABLO"nun gösterdiği gibi BİREBİR AYNI, çünkü koruma bu saldırıyı
-zaten durduramadı):
-
-| istenen sınıf | en yakın gerçek sınıf (argmin KID) | KID değeri | beklenen (takas varsayımıyla) |
+| | doğal kayma (saldırısız site) | saldırının kendi katkısı | toplam ‖ΔG‖ |
 |---|---|---|---|
-| DR-0 | DR-0 | 0.0489 | DR-4 |
-| DR-4 | DR-1 | 0.0599 | DR-0 |
+| conditional_poison_compensated | 2 506,64 | 255,33 | 2 519,53 |
 
-`swap_detected` DR-2 ve DR-4 için `true` dönüyor ama bunlar
-UYGULANAN takasla (DR-0↔DR-4) İLGİSİZ — köşegen BÜYÜK ÖLÇÜDE
-korunmuş. **Takas, üretilen görüntülerin sınıf kimliğinde
-GÖRÜNMÜYOR.** Üç hipotez, SIRAYLA test ediliyor:
+√(2506,64² + 255,33²) ≈ 2519,5 — katkı doğal kaymaya yaklaşık DİK
+(kareler toplamı) bindiği için toplam ancak %0,5 artıyor. Basit
+takasın katkısı ≈ 255,33/4 ≈ 64 (kompanzasyon embed delta'sını tam
+`NUM_SITES=4` kat büyütür, birim testle doğrulanmıştır), toplam 2507.
+Sonuç: telafi saldırıyı 4× güçlendirirken norm-görünürlüğünü neredeyse
+hiç artırmıyor.
 
-- **H1 — FedAvg seyreltmesi**: zehirli site 4 siteden biri, takaslanmış
-  gömme sadece 1/4 ağırlıkla ortalamaya giriyor, diğer 3 site DOĞRU
-  gömmeyi getiriyor — ortalama sonuç orijinal gömmeye YAKIN kalmış
-  olabilir.
-- **H2 — Gömme takası yetersiz**: sınıf bilgisi SADECE `embed`
-  satırında değil, `embed_proj`/`fc0`/`fc1` üzerinden de akıyor
-  olabilir — takas `w` vektörünü GERÇEKTEN değiştirmiyor olabilir.
-- **H3 — KID ayrım gücü yetersiz**: 20 görüntü/sınıf (quick mod) az,
-  DR sınıfları görsel olarak zaten YAKIN (matris değerleri dar bir
-  `0.04-0.11` aralığında) — ayrım GÜCÜ yetersiz kalıyor olabilir.
+## Koşullu zehirleme varyantlarının sınıf-tutarlılığı karşılaştırması
 
-### H1 testi — ŞİMDİ eklendi, Colab'da koşulmayı bekliyor
+Ölçüt: DR-4 istendiğinde ÜRETİLEN görüntüler ile gerçek DR-0 / gerçek
+DR-4 arasındaki KID (satır DR-4; düşük = benzer). Takas başarılıysa
+DR-0'a olan KID, DR-4'e olandan KÜÇÜK olmalı (oran = KID(DR-4)/KID(DR-0) > 1).
 
-`scripts/run_attacks.py`'ye YENİ bir tanı koşulu eklendi:
-**`poisoned_alone`** (`CONDITIONS` artık `("unprotected", "protected",
-"poisoned_alone")`) — `build_poisoned_alone_global` FedAvg'ı TAMAMEN
-ATLAYIP zehirli site'ın KENDİ ağırlığını (seyreltme YOK, ağırlık 1.0)
-doğrudan "global" olarak kullanıp AYNI `evaluate_condition` (FID +
-sınıf-tutarlılığı) işlem hattından geçiriyor. Bu koşul TÜM saldırılar
-için otomatik hesaplanıyor (sadece `conditional_poison` için özel bir
-dal AÇILMADI — aynı mekanizma her saldırı için tutarlı bir
-karşılaştırma tabanı sağlıyor).
+| durum | DR-4 → gerçek DR-0 | DR-4 → gerçek DR-4 | oran | perceived_class[4] |
+|---|---|---|---|---|
+| basit takas, zehirli site TEK BAŞINA | 0,0127 | 0,0710 | 5,59 | 0 |
+| basit takas, FedAvg sonrası | 0,0667 | 0,0846 | 1,27 | 0 |
+| **telafili**, zehirli site TEK BAŞINA | 0,0096 | 0,0591 | 6,16 | 0 |
+| **telafili**, FedAvg sonrası | 0,0453 | 0,1075 | **2,37** | 0 |
 
-**Yorumlama kılavuzu:**
-- `poisoned_alone`'da takas (DR-0→DR-4, DR-4→DR-0) GÖRÜNÜYORSA → **H1
-  DOĞRU** (seyreltme sorunu) — saldırı GÜÇLENDİRİLMELİ (aşağıdaki
-  öneriye bakın).
-- `poisoned_alone`'da DA görünmüyorsa → **H1 ELENDİ**, sıradaki adım
-  H2 testi (aynı `z` ile takas öncesi/sonrası `w` çıktısını
-  karşılaştırmak — kod HENÜZ yazılmadı, kullanıcının isteği üzerine
-  ÖNCE H1 sonucu bekleniyor).
+Okuma: (i) tek başına iki varyant da takası açıkça gösteriyor (5,6× /
+6,2×). (ii) Basit takasın sinyali FedAvg'da 1,27'ye çöküyor (seyrelme —
+H1, doğrulandı). (iii) Telafi FedAvg sonrası oranı 1,27 → 2,37'ye çıkarıp
+sinyalin bir kısmını GERİ KAZANDIRIYOR — tam telafi (oranın tek-başına
+değerine dönmesi) olmadı: formül ortalama GİRDİ satırını hedefe eşitler,
+ama üretilen görüntüler mapping/synthesis'in geri kalanından da geçtiği
+için KID uzayına doğrusal yansımıyor. (iv) `perceived_class[4]=0` dört
+durumda da.
 
-### Eğer H1 doğrulanırsa (seyreltme confirmed): önerilen güçlendirme
+### Tam matrisler (satır = istenen sınıf, sütun = gerçek sınıf DR-0..DR-4)
 
-Kullanıcının sorduğu "hangi yolu önerirsin" sorusuna cevap: **basit
-takas yerine, ortalama sonucun HEDEFE ulaşacağı şekilde
-KOMPANSE EDİLMİŞ bir gömme değeri öneriyorum** — birden fazla
-kötücül site EKLEMEK yerine (bu, TEHDİT MODELİNİ "tek kötücül site"
-yerine "koordineli çoklu kötücül site"ye DEĞİŞTİRİR, ki bu ayrı ve
-daha güçlü bir varsayım gerektirir; `scaled_poison`'ın zaten kapsadığı
-"tek site ne kadar agresif olabilir" sorusuna da karşılık gelmez).
-Gerekçe: `scaled_poison`, ΔG'yi ÖLÇEKLEYEREK aynı seyreltme sorununu
-ZATEN çözdü (FedAvg'ın 1/4 ağırlığını telafi etmek için saldırıyı
-BÜYÜTTÜ) — AYNI mantık `conditional_poison`'a da uygulanabilir:
-basit satır takası yerine, zehirli site'ın KATKISI
-
-```
-poisoned_row = 4 * target_row - 3 * honest_row
-```
-
-olarak hesaplanmalı — burada `target_row` takas hedefi (ör. DR-4'ün
-gerçek gömme satırı), `honest_row` DR-0'ın (değiştirilmeden önceki)
-gerçek gömme satırı. `(3*honest_row + poisoned_row)/4 = target_row`
-eşitliğini SAĞLAYACAK şekilde çözülmüş — yani FedAvg SONRASI ortalama
-TAM OLARAK hedef değere ulaşıyor, basit takasın aksine (ki o zaten
-1/4'e seyreliyordu). Bu, `attacks/conditional_poison.py`'ye
-`swap_embed_rows`'un YANINA (onun YERİNE değil — basit takas kendi
-başına da GEÇERLİ bir "en kaba koşullu saldırı" senaryosu, ayrı
-tutulmalı) yeni bir `compensated_swap_embed_rows(state_dict, row_a,
-row_b, num_sites, *, embed_key)` fonksiyonu olarak eklenebilir —
-`num_sites` FedAvg'daki toplam site sayısı (bu projede 4). **Bu kod
-HENÜZ yazılmadı** — H1 sonucunu bekliyor, kullanıcının "sonuca göre
-devam ederiz" talimatına uygun olarak.
-
-### H1 SONUCU — DOĞRULANDI (Colab, `conditional_poison__poisoned_alone`, quick mod, 20 görüntü/sınıf)
-
-`perceived_class = [1, 1, 1, 3, 0]`, `swap_detected = [T, F, T, F, T]`.
-KID matrisi (satır = istenen sınıf, sütun = gerçek sınıf DR-0..DR-4):
+**Telafili, FedAvg sonrası (unprotected; protected aynı girdi ve aynı
+tohumla hesaplandığından — zehirli site norm kapısını geçip dahil
+edildiği için — aynıdır):**
 
 | istenen | DR-0 | DR-1 | DR-2 | DR-3 | DR-4 |
 |---|---|---|---|---|---|
-| DR-0 | 0.0539 | 0.0119 | 0.0168 | 0.0195 | 0.0180 |
-| DR-1 | 0.0500 | 0.0172 | 0.0298 | 0.0390 | 0.0342 |
-| DR-2 | 0.0616 | 0.0164 | 0.0206 | 0.0305 | 0.0299 |
-| DR-3 | 0.0563 | 0.0176 | 0.0188 | 0.0121 | 0.0143 |
-| DR-4 | **0.0127** | 0.0525 | 0.0559 | 0.0773 | **0.0710** |
+| DR-0 | 0,0789 | 0,0389 | 0,0471 | 0,0415 | 0,0474 |
+| DR-1 | 0,0913 | 0,0627 | 0,0804 | 0,0868 | 0,0837 |
+| DR-2 | 0,0834 | 0,0483 | 0,0573 | 0,0597 | 0,0630 |
+| DR-3 | 0,0772 | 0,0428 | 0,0445 | 0,0366 | 0,0401 |
+| DR-4 | 0,0453 | 0,0859 | 0,0955 | 0,1120 | 0,1075 |
 
-**En net kanıt DR-4 satırı**: DR-4 istendiğinde gerçek DR-0'a KID=0.0127,
-gerçek DR-4'e 0.0710 (~5,6 kat fark), `perceived_class[4]=0` — takas
-tam beklenen yönde AÇIKÇA görünüyor. FedAvg sonrası (unprotected/
-protected) aynı hücre 0.0667'ye çıkıp sinyal kayboluyor. **Sonuç: takas
-ÇALIŞIYOR, tek sorun 1/4 seyrelmesi; H2 ve H3 testine GEREK KALMADI.**
+**Telafili, zehirli site TEK BAŞINA (`poisoned_alone`):**
 
-**Gözlem (asimetri):** DR-0 tarafı simetrik değil (`perceived_class[0]=1`,
-DR-4 değil): DR-0 sütunu TÜM satırlarda yüksek (0.05-0.06) — DR-0
-gerçek görüntüleri KID uzayında diğer sınıflardan uzak duruyor, bu
-yüzden "DR-0 istendi → DR-4'e benzedi" sinyali DR-0 satırında bu
-ölçekte (20 görüntü/sınıf) argmin'e yansımıyor. Bu, DR-0 için ayrımın
-DR-4 kadar net olmadığını gösteren bir ölçüm sınırlılığıdır (H3 ile
-kısmen ilişkili — örnek sayısı artırılarak tekrar bakılabilir);
-kanıt olarak DR-4 satırı kullanılmalı.
+| istenen | DR-0 | DR-1 | DR-2 | DR-3 | DR-4 |
+|---|---|---|---|---|---|
+| DR-0 | 0,1151 | 0,0999 | 0,0649 | 0,0719 | 0,0708 |
+| DR-1 | 0,0500 | 0,0172 | 0,0298 | 0,0390 | 0,0342 |
+| DR-2 | 0,0616 | 0,0164 | 0,0206 | 0,0305 | 0,0299 |
+| DR-3 | 0,0563 | 0,0176 | 0,0188 | 0,0121 | 0,0143 |
+| DR-4 | 0,0096 | 0,0471 | 0,0487 | 0,0642 | 0,0591 |
 
-## Üç saldırı varyantı: `conditional_poison` vs `conditional_poison_compensated`
+**Basit takas, zehirli site TEK BAŞINA (H1 testi):**
+`perceived_class=[1,1,1,3,0]`; DR-4 satırı `[0,0127, 0,0525, 0,0559, 0,0773, 0,0710]`,
+DR-0 satırı `[0,0539, 0,0119, 0,0168, 0,0195, 0,0180]`.
 
-- **`conditional_poison` (basit takas)**: `||ΔG||=2507 < tau=3000` —
-  norm kapısından GEÇİYOR, ama FedAvg'da 1/4'e seyreliyor (tespit
-  edilebilir sinyal kayboluyor). Gizli ama etkisiz kalıyor.
-- **`conditional_poison_compensated`** (`poisoned_row = 4*target − 3*honest`,
-  `attacks/conditional_poison.py: compensated_swap_embed_rows`): FedAvg
-  SONRASI ortalama TAM hedef satıra ulaşır (birim testle doğrulandı) —
-  ama zehirli site'ın embed delta'sı basit takasın TAM 4 katıdır
-  (`test_compensated_swap_embed_rows_delta_is_num_sites_times_simple_swap_delta`).
-- **KRİTİK soru — kompanzasyon `tau=3000`'i aşıyor mu?** Toplam
-  `||ΔG||` site'ın DOĞAL yerel-eğitim kaymasını da içerir, bu yüzden
-  toplam 4× büyümez: `||ΔG||² ≈ doğal² + (saldırı katkısı)²` mertebesinde.
-  `scripts/run_attacks.py` artık HER saldırı için `natural_delta_norm`
-  (saldırısız site kayması) ve `attack_only_delta_norm` (saldırının kendi
-  katkısı) değerlerini de loglayıp JSON'a yazıyor — GERÇEK sayı Colab
-  koşumunda çıkacak, burada UYDURULMUYOR. Yorum: aşarsa norm kapısı
-  telafili saldırıyı yakalar ve "ince saldırı geçer" tezi SADECE basit
-  (seyreltilen) versiyona dayanır — gizlilik ile etkinlik arasında bir
-  takas (trade-off) bulgusu olur; aşmazsa tez güçlenir. **Bu sayı raporda
-  öne çıkarılacak: (bekleyen — `conditional_poison_compensated` koşumu).**
-- Her iki varyant da üç koşulda (unprotected/protected/poisoned_alone)
-  koşulacak; norm kapısının her ikisine tepkisi `norm_caught` sütunundan
-  okunacak.
+### Gözlem: takasın iki yönü asimetrik
 
-## `ops_impl` hâlâ `ref` — hata mesajı belgeleme
+DR-4→DR-0 yönü net. DR-0 yönü değil: telafili `poisoned_alone`'da DR-0
+üretimi KENDİ gerçek sınıfına 0,1151 (satırın EN YÜKSEĞİ) — yani DR-0
+üretimi BOZULMUŞ ama DR-4'e KAYMAMIŞ (DR-4'e 0,0708). Basit takasta da
+DR-0 satırında argmin DR-1 (`perceived_class[0]=1`). Olası neden
+(DOĞRULANMADI, hipotez): DR-0 satırı DR-4'ün gömmesinden ekstrapole
+edilerek (`4·e4 − 3·e0`) veri manifoldunun dışına itiliyor ve üretim
+kalitesini kaybediyor; ayrıca DR-0 gerçek görüntüleri KID uzayında diğer
+sınıflardan uzak (DR-0 sütunu çoğu satırda yüksek). Kanıt olarak DR-4
+satırı kullanılmalı; DR-0 yönü ölçüm sınırlılığı olarak raporlanır.
 
-`resolve_ops_impl` artık CUDA smoke-test'i başarısız olursa hatanın TAM
-traceback'ini konsola basıyor ve `ops_impl_fallback_error` alanı olarak
-sonuç JSON'una kaydediyor. Önceki koşumda basılan mesaj bu oturumda
-GÖRÜLMEDİ (Colab logu paylaşılmadı) — o mesaj/`ops_impl_fallback_error`
-paylaşıldığında buraya verbatim işlenecek. Gerçek bir derleme hatasıysa
-`ref` ile devam edilecek; bir cihaz/başka kod hatasıysa düzeltilecek.
+## ZK'nın doğru çerçevesi
+
+ZK bu saldırıyı YAKALAMIYOR ve yakalaması BEKLENMİYOR. Mimari olarak
+ZK katmanı bir taahhüt–ispat–katkı TUTARLILIK denetimidir, içerik
+denetimi değildir: weight commitment ve ezkl devresi aynı `full_state`'ten
+türer (`orchestrator/round_runner.py`), dolayısıyla dürüst bir istemcinin
+KENDİ (zehirli) ağırlığını taahhüt edip ispatlaması hep geçerli çıkar.
+ZK'nın değeri şudur: norm kapısı ve diğer kontroller bir ağırlık
+kümesini denetlerken, denetlenen şeyin GERÇEKTEN katkıda bulunulan şey
+olmasını garanti eder (bait-and-switch'i imkânsız kılar). Yani ZK
+norm-tabanlı savunmayı TAMAMLAR, yerine geçmez; içerik zehirlemesine
+karşı koruma sağlamaz. Kapsam ayrıntısı (`attack_touches_zk_proven_scope`):
+rastgele/ölçekli saldırılar ZK'nın hiç kapsamadığı synthesis ağını da
+bozar; koşullu saldırı ise tam ZK kapsamındaki `mapping.embed` üzerinde
+olduğu halde yine geçerli ispat üretir.
+
+## CUDA meselesi (kapandı) — hata verbatim
+
+`--ops-impl auto` smoke-test'i `g_ema` GPU'ya taşındıktan (ve
+`assert_module_on_device` geçtikten) sonra da başarısız oldu. Hata bir
+cihaz sorunu değil GERÇEK derleme hatasıdır:
+
+```
+Setting up PyTorch plugin "bias_act_plugin"... Failed!
+ModuleNotFoundError: No module named 'bias_act_plugin'
+```
+
+(ninja ve `CUDA_HOME=/usr/local/cuda` mevcut olduğu halde; Colab'ın
+Python 3.13 / güncel PyTorch ortamında StyleGAN-XL custom op'ları
+derlenemiyor.) Karar: `ref` modu KALICI; tüm sonuçlar `ops_impl='ref'`
+ile üretildi (`ops_impl` ve `ops_impl_fallback_error` alanları JSON'da).
+
+## Sınırlılıklar (makalede açıkça yer almalı)
+
+1. **FID ölçülmedi.** `ref` modunda ölçülen 0,498 s/görüntü ile
+   `fid50k_full`+`kid50k_full` koşul başına ≈13,8 saat; 18 koşul
+   (6 saldırı × 3) ≈ 248 saat. FID'in kaba saldırılarda (random/scaled)
+   ne gösterdiği ölçülmedi. Bu saldırılar zaten norm kapısınca
+   yakalandığı için ana bulguyu etkilemez, ama FID'in bu saldırılardaki
+   davranışı raporlanamaz.
+2. **`--metrics-mode custom --fid-num-gen 5000` maliyet tahmini**
+   (0,498 s/görüntü, ref; yalnızca üretim süresi — Inception çıkarımı ve
+   ilk seferde gerçek-veri özellik önbelleği EK süredir):
+   `run_custom_fid_kid` FID ve KID için ayrı ayrı 5000 görüntü üretir →
+   koşul başına ≈ 2 × 5000 × 0,498 s ≈ 4 980 s ≈ **1,4 saat**; tam koşum
+   18 koşul ≈ **25 saat**. Daha makul alt küme (koşul seçimi bayrağı
+   olmadığından `--only-attack` ile saldırı bazında): {random_weights,
+   scaled_poison_10x} için unprotected+protected, {conditional_poison,
+   conditional_poison_compensated} için unprotected (protected aynı
+   girdi) ≈ 6 koşul ≈ **8–9 saat**. Bu değerler 13,13 ile
+   KARŞILAŞTIRILAMAZ (`fid_comparable_to_reference=False`), yalnızca bu
+   koşumun iç karşılaştırması içindir.
+3. **Saldırısız temel matris yok.** Temiz FedAvg için sınıf-tutarlılığı
+   matrisi ölçülmedi; `perceived_class[4]=0` ve DR-4 satırındaki DR-0
+   düşüklüğünün temiz modelde NE olduğu bilinmiyor. Kanıt, tek-başına↔
+   FedAvg karşılaştırması ve satır-içi göreli farkla destekleniyor; bir
+   `no_attack` temel çizgisi bu sınırlılığı kapatır.
+4. **İstatistiksel güven.** 20 görüntü/sınıf, tek tohum (seed=0), KID için
+   güven aralığı hesaplanmadı; matris değerleri (0,01–0,12) dar bir
+   aralıkta ve DR sınıfları zaten görsel olarak yakın. Oranlar (1,27 /
+   2,37 / 5,59 / 6,16) yön için güçlü kanıt, büyüklük için gösterge
+   niteliğindedir.
+5. **Tek round, tek zehirli site** (round 10, site 0); telafi formülü diğer
+   dürüst sitelerin aynı embed satırlarına sahip olduğunu varsayar (hepsi
+   aynı önceki global'den başlar).
+6. **`ref` ↔ `cuda` eşdeğerliği doğrulanamadı** — aşağıya bakın.
 
 ## Sınırlılık: `13.13` ile karşılaştırılabilirlik (`ops_impl` moduna bağlı)
 
 Faz A'daki mevcut `fid50k_full=13.13` ölçümü, ORİJİNAL eğitim
 ortamında (CUDA custom op'ları BAŞARIYLA derlenmiş, `impl='cuda'`)
-yapıldı. Bu Colab oturumunda CUDA derlemesi BAŞARISIZ olduysa
-(`ops_impl='ref'`, bkz. yukarıdaki "Tasarım kararları" madde 4) bu
+yapıldı. Bu Colab oturumunda CUDA derlemesi BAŞARISIZ OLDU
+(`ops_impl='ref'`, kalıcı;, bkz. yukarıdaki "Tasarım kararları" madde 4) bu
 fazın FID ölçümleri saf PyTorch REFERANS uygulamasıyla hesaplanıyor.
 `bias_act`/`upfirdn2d`/`filtered_lrelu`'nun `ref` yolu MATEMATİKSEL
 OLARAK `cuda` yoluyla AYNI sonucu üretmesi GEREKİR (StyleGAN-XL'in
@@ -419,7 +375,7 @@ KIYASLANMADI — orijinal ortamda CUDA derlemesi başarısız olduğundan
 böyle bir karşılaştırma bu oturumda YAPILAMADI). Bu yüzden:
 
 - **Saldırı × koruma matrisinin İÇ karşılaştırmaları GEÇERLİ**: aynı
-  koşumdaki TÜM hücreler (5 saldırı × 2 koşul) AYNI `ops_impl` ile
+  koşumdaki TÜM hücreler (6 saldırı × 3 koşul) AYNI `ops_impl` ile
   ölçülüyor — göreli farklar (unprotected vs protected, saldırı A vs
   B) tutarlı bir zeminde karşılaştırılıyor.
 - **`13.13` referansıyla DOĞRUDAN karşılaştırma, `ops_impl='ref'` ise
@@ -431,64 +387,15 @@ böyle bir karşılaştırma bu oturumda YAPILAMADI). Bu yüzden:
   ayrıca ölçülüp `13.13` ile DOĞRUDAN karşılaştırılarak bu varsayım
   kapatılabilir.
 
-## Doğrulanan desen (quick mod, `--metrics-mode quick`, 10/10 koşul geçti)
-
-- **`random_weights`/`scaled_poison_10x`/`50x`/`100x`: `||ΔG||`
-  (59592/25066/125332/250664) `tau=3000`'i AÇIKÇA AŞIYOR — norm
-  kontrolü YAKALIYOR, zehirli site protected koşulda dışlanıyor
-  (DOĞRULANDI, artık "beklenen" değil).** `scaled_poison_10x`'in bile
-  (en küçük ölçek) `tau`'nun ~8 katı bir norm ürettiği ÖNEMLİ — bu
-  saldırı ailesi norm kontrolüne karşı hiç "sınırda" değil, RAHATÇA
-  yakalanıyor.
-- **`conditional_poison`: `||ΔG||=2507 < tau=3000` — norm kontrolü
-  KAÇIRIYOR (DOĞRULANDI).** Faz A'nın gerçek p99=2518 ölçümünden
-  seçilen `tau`'nun HEMEN ÜZERİNDE kalıyor — yani bu saldırı,
-  norm eşiğinin keyfi OLMAMASINA RAĞMEN, meşru güncellemelerin doğal
-  aralığında SAKLANABİLİYOR.
-- **`zk_caught` BEŞ saldırının BEŞİ İÇİN DE `False` — bu Colab
-  ölçümüne bağlı DEĞİL, kod garantisi** (`verify_commitment_consistency`
-  bir state'i kendisiyle karşılaştırıyor, hash eşitliği matematiksel
-  olarak KESİN). "ZK içerik değil tutarlılık kanıtlar" bulgusunun
-  doğrudan kanıtı — Colab'da ayrıca DOĞRULANMASI beklenmiyor, zaten
-  kesin.
-- **PENDING (JSON gerekli):** sınıf-tutarlılığı matrisinde
-  `perceived_class[0]==4`/`perceived_class[4]==0` (DR-0/DR-4 swap)
-  görünüyor mu? Bu, `conditional_poison`'ın GERÇEKTEN tespit
-  edilebilir olduğunun kanıtı olacak — `attack_results.json`'un
-  `conditional_poison__unprotected`/`conditional_poison__protected`
-  anahtarlarının `class_confusion` alanı paylaşılırsa KESİNLEŞİR.
 
 ## Dürüstlük noktası (makalede aynen yer almalı)
 
-ZK doğrulamasının bu sistemdeki GERÇEK rolü — taahhüt-ispat-katkı
-tutarlılığı, İÇERİK/kalite denetimi DEĞİL — GERİLİMLİ ama ÖNEMLİ bir
-sınırlılık: zincir üzeri ZK katmanı TEK BAŞINA zehirlemeye karşı
-yeterli DEĞİL, istatistiksel/davranışsal analiz (FID/KID/sınıf-
-tutarlılığı gibi) TAMAMLAYICI bir savunma katmanı olarak GEREKLİ. Bu
-ayrım makalenin "ZK'nın sınırlılıkları" bölümüne AÇIKÇA girmeli —
-ZK'yı olduğundan güçlü göstermemek adına.
-
-## Bekleyen veri
-
-`conditional_poison`'ın unprotected/protected sınıf-tutarlılığı
-ÖZETİ artık GERÇEK (yukarıdaki "takas GÖRÜNMÜYOR" bölümü) — ama şunlar
-HÂLÂ bekliyor:
-
-1. **H1 testinin sonucu**: `poisoned_alone` koşulunun
-   `conditional_poison__poisoned_alone` kaydının `class_confusion`
-   alanı — takas ORADA görünüyor mu? (kod yazıldı, Colab'da HENÜZ
-   koşulmadı).
-2. Diğer 4 saldırının (`random_weights`/`scaled_poison_*`) TAM
-   `class_confusion` matrisleri — bu saldırıların norm kontrolüyle
-   zaten yakalandığı biliniyor ama sınıf-tutarlılığı üzerindeki
-   yan etkileri (ör. görüntü kalitesi bu kadar bozulunca sınıf
-   ayrımı da rastgeleleşiyor mu) henüz görülmedi.
-3. 5×5 tam matrislerin TAMAMI (sadece DR-0/DR-4 satırları değil) — 
-   `swap_detected`'ın DR-2/DR-4'te neden `true` döndüğünü (uygulanan
-   takasla İLGİSİZ) anlamak için.
-4. (Madde 7'nin `--metrics-mode custom` koşumu ayrıca yapılırsa) FID
-   sütunu — `13.13` ile karşılaştırılamaz notuyla birlikte.
-
-`attack_results.json` dosyasının TAMAMI (ya da en azından
-`conditional_poison__poisoned_alone`'un `class_confusion` alanı)
-paylaşıldığında H1/H2/H3 kesinleştirilip rapor tamamlanacak.
+Bu çalışmada norm kapısı, dışarıdan zorlanan ağır saldırıları (rastgele
+ağırlık, ölçekli ΔG; ‖ΔG‖ tau'nun 8–84 katı) engelliyor — bunu norm
+kapısı yapıyor, ZK değil. Meşru güncellemelerin doğal aralığında kalan,
+sınıf-hedefli bir saldırıyı (‖ΔG‖ = 0,84·tau, FedAvg seyrelmesi telafi
+edilse bile) ne norm kapısı ne ZK durduruyor; tespit için
+davranışsal/istatistiksel analiz (sınıf-tutarlılığı karışıklık
+matrisi) gerekiyor ve o da örnek küçüklüğü nedeniyle şu an yön kanıtı
+düzeyinde. ZK'nın katkısı içerik denetimi değil, denetlenen ağırlığın
+katkıda bulunulanla aynı olmasının garantisidir.
