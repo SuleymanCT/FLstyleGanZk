@@ -341,6 +341,68 @@ row_b, num_sites, *, embed_key)` fonksiyonu olarak eklenebilir —
 HENÜZ yazılmadı** — H1 sonucunu bekliyor, kullanıcının "sonuca göre
 devam ederiz" talimatına uygun olarak.
 
+### H1 SONUCU — DOĞRULANDI (Colab, `conditional_poison__poisoned_alone`, quick mod, 20 görüntü/sınıf)
+
+`perceived_class = [1, 1, 1, 3, 0]`, `swap_detected = [T, F, T, F, T]`.
+KID matrisi (satır = istenen sınıf, sütun = gerçek sınıf DR-0..DR-4):
+
+| istenen | DR-0 | DR-1 | DR-2 | DR-3 | DR-4 |
+|---|---|---|---|---|---|
+| DR-0 | 0.0539 | 0.0119 | 0.0168 | 0.0195 | 0.0180 |
+| DR-1 | 0.0500 | 0.0172 | 0.0298 | 0.0390 | 0.0342 |
+| DR-2 | 0.0616 | 0.0164 | 0.0206 | 0.0305 | 0.0299 |
+| DR-3 | 0.0563 | 0.0176 | 0.0188 | 0.0121 | 0.0143 |
+| DR-4 | **0.0127** | 0.0525 | 0.0559 | 0.0773 | **0.0710** |
+
+**En net kanıt DR-4 satırı**: DR-4 istendiğinde gerçek DR-0'a KID=0.0127,
+gerçek DR-4'e 0.0710 (~5,6 kat fark), `perceived_class[4]=0` — takas
+tam beklenen yönde AÇIKÇA görünüyor. FedAvg sonrası (unprotected/
+protected) aynı hücre 0.0667'ye çıkıp sinyal kayboluyor. **Sonuç: takas
+ÇALIŞIYOR, tek sorun 1/4 seyrelmesi; H2 ve H3 testine GEREK KALMADI.**
+
+**Gözlem (asimetri):** DR-0 tarafı simetrik değil (`perceived_class[0]=1`,
+DR-4 değil): DR-0 sütunu TÜM satırlarda yüksek (0.05-0.06) — DR-0
+gerçek görüntüleri KID uzayında diğer sınıflardan uzak duruyor, bu
+yüzden "DR-0 istendi → DR-4'e benzedi" sinyali DR-0 satırında bu
+ölçekte (20 görüntü/sınıf) argmin'e yansımıyor. Bu, DR-0 için ayrımın
+DR-4 kadar net olmadığını gösteren bir ölçüm sınırlılığıdır (H3 ile
+kısmen ilişkili — örnek sayısı artırılarak tekrar bakılabilir);
+kanıt olarak DR-4 satırı kullanılmalı.
+
+## Üç saldırı varyantı: `conditional_poison` vs `conditional_poison_compensated`
+
+- **`conditional_poison` (basit takas)**: `||ΔG||=2507 < tau=3000` —
+  norm kapısından GEÇİYOR, ama FedAvg'da 1/4'e seyreliyor (tespit
+  edilebilir sinyal kayboluyor). Gizli ama etkisiz kalıyor.
+- **`conditional_poison_compensated`** (`poisoned_row = 4*target − 3*honest`,
+  `attacks/conditional_poison.py: compensated_swap_embed_rows`): FedAvg
+  SONRASI ortalama TAM hedef satıra ulaşır (birim testle doğrulandı) —
+  ama zehirli site'ın embed delta'sı basit takasın TAM 4 katıdır
+  (`test_compensated_swap_embed_rows_delta_is_num_sites_times_simple_swap_delta`).
+- **KRİTİK soru — kompanzasyon `tau=3000`'i aşıyor mu?** Toplam
+  `||ΔG||` site'ın DOĞAL yerel-eğitim kaymasını da içerir, bu yüzden
+  toplam 4× büyümez: `||ΔG||² ≈ doğal² + (saldırı katkısı)²` mertebesinde.
+  `scripts/run_attacks.py` artık HER saldırı için `natural_delta_norm`
+  (saldırısız site kayması) ve `attack_only_delta_norm` (saldırının kendi
+  katkısı) değerlerini de loglayıp JSON'a yazıyor — GERÇEK sayı Colab
+  koşumunda çıkacak, burada UYDURULMUYOR. Yorum: aşarsa norm kapısı
+  telafili saldırıyı yakalar ve "ince saldırı geçer" tezi SADECE basit
+  (seyreltilen) versiyona dayanır — gizlilik ile etkinlik arasında bir
+  takas (trade-off) bulgusu olur; aşmazsa tez güçlenir. **Bu sayı raporda
+  öne çıkarılacak: (bekleyen — `conditional_poison_compensated` koşumu).**
+- Her iki varyant da üç koşulda (unprotected/protected/poisoned_alone)
+  koşulacak; norm kapısının her ikisine tepkisi `norm_caught` sütunundan
+  okunacak.
+
+## `ops_impl` hâlâ `ref` — hata mesajı belgeleme
+
+`resolve_ops_impl` artık CUDA smoke-test'i başarısız olursa hatanın TAM
+traceback'ini konsola basıyor ve `ops_impl_fallback_error` alanı olarak
+sonuç JSON'una kaydediyor. Önceki koşumda basılan mesaj bu oturumda
+GÖRÜLMEDİ (Colab logu paylaşılmadı) — o mesaj/`ops_impl_fallback_error`
+paylaşıldığında buraya verbatim işlenecek. Gerçek bir derleme hatasıysa
+`ref` ile devam edilecek; bir cihaz/başka kod hatasıysa düzeltilecek.
+
 ## Sınırlılık: `13.13` ile karşılaştırılabilirlik (`ops_impl` moduna bağlı)
 
 Faz A'daki mevcut `fid50k_full=13.13` ölçümü, ORİJİNAL eğitim

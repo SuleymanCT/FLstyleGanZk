@@ -72,6 +72,26 @@ def test_apply_attack_conditional_poison_only_reports_embed_key():
     assert torch.equal(poisoned["mapping.fc0.weight"], site["mapping.fc0.weight"])
 
 
+def test_apply_attack_conditional_poison_compensated_reports_only_embed_key():
+    site, prev = _synthetic_site_and_prev()
+    poisoned, modified_keys = apply_attack("conditional_poison_compensated", poisoned_site_state=site, prev_global_state=prev)
+    assert modified_keys == ["mapping.embed.weight"]
+    # fc0 saldırıdan ETKİLENMEMELİ
+    assert torch.equal(poisoned["mapping.fc0.weight"], site["mapping.fc0.weight"])
+
+
+def test_apply_attack_compensated_embed_delta_is_num_sites_times_simple_swap_delta():
+    # Kompanzasyonun ||ΔG||'yi buyutme miktari: embed delta'si tam NUM_SITES kat.
+    from scripts.run_attacks import NUM_SITES
+
+    site, prev = _synthetic_site_and_prev()
+    simple, _ = apply_attack("conditional_poison", poisoned_site_state=site, prev_global_state=prev)
+    comp, _ = apply_attack("conditional_poison_compensated", poisoned_site_state=site, prev_global_state=prev)
+    simple_delta = simple["mapping.embed.weight"] - site["mapping.embed.weight"]
+    comp_delta = comp["mapping.embed.weight"] - site["mapping.embed.weight"]
+    assert torch.allclose(comp_delta, NUM_SITES * simple_delta, atol=1e-4)
+
+
 def test_apply_attack_unknown_name_raises():
     site, prev = _synthetic_site_and_prev()
     with pytest.raises(ValueError, match="Bilinmeyen saldırı"):

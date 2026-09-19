@@ -5,7 +5,7 @@ tensörlerle yerelde GERÇEKTEN test edilir."""
 import pytest
 import torch
 
-from attacks.conditional_poison import swap_embed_rows
+from attacks.conditional_poison import compensated_swap_embed_rows, swap_embed_rows
 from attacks.random_weights import randomize_state_dict
 from attacks.scaled_poison import scale_delta
 
@@ -128,3 +128,65 @@ def test_swap_embed_rows_out_of_range_raises_valueerror():
     embed = torch.arange(20.0).reshape(5, 4)
     with pytest.raises(ValueError, match="DIŞINDA"):
         swap_embed_rows({"mapping.embed.weight": embed}, row_a=0, row_b=10)
+
+
+# --- conditional_poison.compensated_swap_embed_rows ---
+# Gerçek Colab bulgusu (H1 testi DOĞRULANDI): basit swap_embed_rows
+# zehirli site TEK BAŞINA ölçüldüğünde takas GÖRÜNÜYOR ama 4 siteli
+# FedAvg'dan SONRA sinyal seyreliyor/kayboluyor - compensated versiyon
+# bunu formülle (num_sites*target - (num_sites-1)*honest) telafi ediyor.
+
+
+def test_compensated_swap_embed_rows_matches_manual_formula():
+    embed = torch.tensor([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])
+    state = {"mapping.embed.weight": embed}
+    result = compensated_swap_embed_rows(state, row_a=0, row_b=1, num_sites=4)
+    # row_a: 4*honest_b - 3*honest_a = 4*[2,2] - 3*[1,1] = [5,5]
+    # row_b: 4*honest_a - 3*honest_b = 4*[1,1] - 3*[2,2] = [-2,-2]
+    assert torch.allclose(result["mapping.embed.weight"][0], torch.tensor([5.0, 5.0]))
+    assert torch.allclose(result["mapping.embed.weight"][1], torch.tensor([-2.0, -2.0]))
+    # dokunulmayan satır aynen kalmalı
+    assert torch.allclose(result["mapping.embed.weight"][2], torch.tensor([3.0, 3.0]))
+
+
+def test_compensated_swap_embed_rows_averaged_with_honest_majority_reaches_exact_target():
+    # FedAvg SIMULASYONU: 3 durust site (degismemis) + 1 zehirli site
+    # (compensated). Ortalama TAM OLARAK hedefe (honest_row_b) ulasmali.
+    honest_a, honest_b = torch.tensor([1.0, 1.0]), torch.tensor([2.0, 2.0])
+    embed = torch.stack([honest_a, honest_b, torch.tensor([9.0, 9.0])])
+    state = {"mapping.embed.weight": embed.clone()}
+    result = compensated_swap_embed_rows(state, row_a=0, row_b=1, num_sites=4)
+    poisoned_row_a = result["mapping.embed.weight"][0]
+
+    fedavg_row_a = (3 * honest_a + poisoned_row_a) / 4
+    assert torch.allclose(fedavg_row_a, honest_b, atol=1e-5)
+
+
+def test_compensated_swap_embed_rows_delta_is_num_sites_times_simple_swap_delta():
+    embed = torch.tensor([[1.0, 1.0], [5.0, 5.0]])
+    state = {"mapping.embed.weight": embed.clone()}
+    simple = swap_embed_rows(state, row_a=0, row_b=1)
+    compensated = compensated_swap_embed_rows(state, row_a=0, row_b=1, num_sites=4)
+
+    simple_delta = simple["mapping.embed.weight"] - embed
+    compensated_delta = compensated["mapping.embed.weight"] - embed
+    assert torch.allclose(compensated_delta, 4 * simple_delta, atol=1e-5)
+
+
+def test_compensated_swap_embed_rows_leaves_original_dict_untouched():
+    embed = torch.tensor([[1.0, 1.0], [2.0, 2.0]])
+    original = embed.clone()
+    state = {"mapping.embed.weight": embed}
+    compensated_swap_embed_rows(state, row_a=0, row_b=1, num_sites=4)
+    assert torch.equal(state["mapping.embed.weight"], original)
+
+
+def test_compensated_swap_embed_rows_raises_on_num_sites_below_two():
+    embed = torch.tensor([[1.0, 1.0], [2.0, 2.0]])
+    with pytest.raises(ValueError, match="num_sites en az 2"):
+        compensated_swap_embed_rows({"mapping.embed.weight": embed}, row_a=0, row_b=1, num_sites=1)
+
+
+def test_compensated_swap_embed_rows_missing_key_raises_keyerror():
+    with pytest.raises(KeyError):
+        compensated_swap_embed_rows({"other.key": torch.ones(3)}, row_a=0, row_b=1, num_sites=4)

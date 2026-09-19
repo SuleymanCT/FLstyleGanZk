@@ -110,10 +110,11 @@ os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import argparse  # noqa: E402 - PYTORCH_CUDA_ALLOC_CONF ayarından SONRA olmalı
 import gc  # noqa: E402
 import time  # noqa: E402
+import traceback  # noqa: E402
 
 import torch  # noqa: E402
 
-from attacks.conditional_poison import DEFAULT_EMBED_KEY, swap_embed_rows  # noqa: E402
+from attacks.conditional_poison import DEFAULT_EMBED_KEY, compensated_swap_embed_rows, swap_embed_rows  # noqa: E402
 from attacks.detection import attack_touches_zk_proven_scope, verify_commitment_consistency
 from attacks.random_weights import randomize_state_dict
 from attacks.scaled_poison import scale_delta
@@ -133,8 +134,12 @@ DEFAULT_ROUND = 10
 DEFAULT_POISONED_SITE_INDEX = 0
 DR_NUM_CLASSES = 5
 SWAP_ROW_A, SWAP_ROW_B = 0, 4  # DR-0 / DR-4 (kullanıcının belirttiği saldırı hedefi)
+NUM_SITES = 4  # FedAvg'daki toplam site sayısı — compensated_swap_embed_rows'un seyrelme telafisi bunu kullanır
 
-ATTACK_NAMES = ("random_weights", "scaled_poison_10x", "scaled_poison_50x", "scaled_poison_100x", "conditional_poison")
+ATTACK_NAMES = (
+    "random_weights", "scaled_poison_10x", "scaled_poison_50x", "scaled_poison_100x",
+    "conditional_poison", "conditional_poison_compensated",
+)
 CONDITIONS = ("unprotected", "protected", "poisoned_alone")
 
 FULL_CLASS_IMAGES_PER_CLASS = 200
@@ -147,6 +152,11 @@ QUICK_CLASS_IMAGES_PER_CLASS = 20
 # KÜÇÜK (1) batch varsayılan; 'cuda' fused kernel kullandığından daha
 # büyük batch güvenli.
 DEFAULT_GEN_BATCH_SIZE_BY_OPS_IMPL = {"cuda": 32, "ref": 1}
+
+# resolve_ops_impl 'auto'da CUDA'dan ref'e DÜŞTÜĞÜNDE gerçek hata metni + traceback burada
+# saklanır ve sonuç JSON'una (`ops_impl_fallback_error`) yazılır — mesaj konsol logunda
+# kaybolmasın, raporda belgelenebilsin.
+OPS_IMPL_DIAGNOSTICS: dict = {"fallback_error": None, "fallback_traceback": None}
 
 
 # ---------------------------------------------------------------------------
@@ -202,6 +212,10 @@ def apply_attack(attack_name: str, *, poisoned_site_state: dict, prev_global_sta
         poisoned = swap_embed_rows(poisoned_site_state, SWAP_ROW_A, SWAP_ROW_B, embed_key=DEFAULT_EMBED_KEY)
         return poisoned, [DEFAULT_EMBED_KEY]
 
+    if attack_name == "conditional_poison_compensated":
+        poisoned = compensated_swap_embed_rows(poisoned_site_state, SWAP_ROW_A, SWAP_ROW_B, NUM_SITES, embed_key=DEFAULT_EMBED_KEY)
+        return poisoned, [DEFAULT_EMBED_KEY]
+
     raise ValueError(f"Bilinmeyen saldırı: {attack_name!r} (geçerli: {ATTACK_NAMES})")
 
 
@@ -222,7 +236,7 @@ def estimate_full_mode_cost(seconds_per_image: float, *, num_conditions: int = 1
     doğrulanan resmi ayar) gerçekçi bir maliyet TAHMİNİ — `seconds_per_image`
     GERÇEK ölçümden (`class_confusion_matrix`'in `generation_seconds`/
     `num_generated_images`'ından) geliyor, UYDURULMUYOR. `num_conditions=10`:
-    5 saldırı × 3 koşul (bu script'in TAM koşumu, `poisoned_alone` dahil)."""
+    6 saldırı × 3 koşul (bu script'in TAM koşumu, `poisoned_alone`/`conditional_poison_compensated` dahil)."""
     if seconds_per_image <= 0:
         raise ValueError(f"seconds_per_image pozitif olmalı, alınan: {seconds_per_image}")
     seconds_per_metric_run = seconds_per_image * images_per_metric_run
@@ -319,6 +333,10 @@ def resolve_ops_impl(ops_impl_arg: str, *, g_ema, z_dim: int, c_dim: int, device
                 f"bu bir CUDA DERLEME hatası DEĞİL, kodda bir cihaz yerleştirme hatası (regresyon). "
                 f"'ref'e sessizce düşülmüyor — kaynağı bulunup düzeltilmeli."
             ) from e
+        OPS_IMPL_DIAGNOSTICS["fallback_error"] = f"{type(e).__module__}.{type(e).__name__}: {e}"
+        OPS_IMPL_DIAGNOSTICS["fallback_traceback"] = traceback.format_exc()
+        print("[run_attacks] --ops-impl auto: CUDA smoke-test TAM traceback:")
+        print(OPS_IMPL_DIAGNOSTICS["fallback_traceback"])
         print(
             f"[run_attacks] UYARI: --ops-impl auto: CUDA custom op derlemesi BAŞARISIZ "
             f"({type(e).__name__}: {e}) — 'ref' (saf PyTorch referans) uygulamasına DÜŞÜLÜYOR. "
@@ -410,7 +428,7 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--attacks-dir", default=None, help="varsayılan: {zk_root}/attacks")
     parser.add_argument(
         "--metrics-mode", default="full", choices=["full", "quick", "custom"],
-        help="'full': resmi fid50k_full/kid50k_full (saatler sürebilir, 5 saldırı x 3 koşul x 50k görüntü — "
+        help="'full': resmi fid50k_full/kid50k_full (saatler sürebilir, 6 saldırı x 3 koşul x 50k görüntü — "
              "'ref' modunda GENELLİKLE PRATİK DEĞİL, bkz. koşum başındaki maliyet ekstrapolasyonu). "
              "'quick': FID/KID ATLANIR, sadece küçük örnekli sınıf-tutarlılığı koşulur (dakikalar, önce sağlama için). "
              "'custom': GERÇEK ama küçük örnekli (--fid-num-gen) bir FID/KID — 13.13 İLE KARŞILAŞTIRILAMAZ, "
@@ -505,11 +523,17 @@ def main(argv=None) -> int:
         poisoned_state, modified_keys = apply_attack(attack_name, poisoned_site_state=poisoned_site_original, prev_global_state=prev_global_state)
 
         delta_norm = compute_delta_norm(prev_global_state, poisoned_state)
+        # Ayrıştırma: site'ın DOĞAL (saldırısız) yerel-eğitim kayması ile saldırının
+        # KENDİ katkısı. Kompanzasyonun ||ΔG||'yi ne kadar büyüttüğünü raporda
+        # göstermek için — toplam norm doğal kaymayı da içerdiğinden 4x büyümez.
+        natural_delta_norm = compute_delta_norm(prev_global_state, poisoned_site_original)
+        attack_only_delta_norm = compute_delta_norm(poisoned_site_original, poisoned_state)
         norm_caught = delta_norm > tau
         zk_caught = not verify_commitment_consistency(poisoned_state, poisoned_state)
         zk_in_scope = attack_touches_zk_proven_scope(modified_keys)
         print(
             f"\n=== Saldırı: {attack_name} — ||ΔG||={delta_norm:.2f} (tau={tau}) "
+            f"[doğal kayma={natural_delta_norm:.2f}, saldırının kendi katkısı={attack_only_delta_norm:.2f}] "
             f"norm_caught={norm_caught} zk_in_scope={zk_in_scope} zk_caught={zk_caught} ==="
         )
 
@@ -544,10 +568,13 @@ def main(argv=None) -> int:
                 "attack": attack_name,
                 "condition": condition,
                 "ops_impl": ops_impl_used,
+                "ops_impl_fallback_error": OPS_IMPL_DIAGNOSTICS["fallback_error"],
                 "device": str(device),
                 "gen_batch_size": gen_batch_size,
                 "poisoned_site_included": poisoned_included,
                 "delta_norm": delta_norm,
+                "natural_delta_norm": natural_delta_norm,
+                "attack_only_delta_norm": attack_only_delta_norm,
                 "norm_caught": norm_caught,
                 "zk_in_scope": zk_in_scope,
                 "zk_caught": zk_caught,

@@ -1294,6 +1294,25 @@ YAZILMADI, H1 sonucunu bekliyor. 3 yeni saf test
 (`build_poisoned_alone_global`×2, `CONDITIONS` içeriği×1) yerelde
 doğrulandı. Tam paket: 359 passed, 2 skipped.
 
+**6. H1 DOĞRULANDI (`poisoned_alone`):** DR-4 satırında gerçek DR-0'a
+KID=0.0127 vs gerçek DR-4'e 0.0710 (`perceived_class[4]=0`) — takas
+tek başına AÇIKÇA görünüyor; FedAvg sonrası aynı hücre 0.0667'ye çıkıp
+kayboluyor (1/4 seyrelme). H2/H3'e gerek kalmadı. Gözlem: DR-0 tarafı
+asimetrik (`perceived_class[0]=1`), DR-0 sütunu tüm satırlarda yüksek —
+ölçüm sınırlılığı, kanıt DR-4 satırı. **Eklenen:**
+`attacks/conditional_poison.py: compensated_swap_embed_rows`
+(`poisoned_row = N*target − (N−1)*honest`, N=`NUM_SITES`=4; FedAvg sonrası
+ortalama TAM hedefe ulaşır, birim testle doğrulandı; embed delta'sı basit
+takasın tam N katı) ve yeni saldırı `conditional_poison_compensated`
+(`conditional_poison` KORUNDU — karşılaştırma için). `run_attacks.py` her
+saldırı için `natural_delta_norm`/`attack_only_delta_norm`'u da
+loglayıp JSON'a yazıyor (kompanzasyonun `tau=3000`'i aşıp aşmadığı GERÇEK
+sayıyla Colab'da görülecek — aşarsa norm kapısı yakalar, "ince saldırı
+geçer" tezi sadece basit versiyona dayanır). `resolve_ops_impl`
+fallback'te TAM traceback basıp `ops_impl_fallback_error` olarak JSON'a
+yazıyor (gerçek mesaj Colab logundan bekleniyor). Testler: 367 passed,
+2 skipped.
+
 **Kabul (İKİ ayrı madde):**
 1. Saldırı × koruma matrisi (bu bölüm) — **HENÜZ KARŞILANMADI**, Colab
    koşumu bekleniyor.
