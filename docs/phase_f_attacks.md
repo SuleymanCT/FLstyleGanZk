@@ -324,6 +324,31 @@ Python 3.13 / güncel PyTorch ortamında StyleGAN-XL custom op'ları
 derlenemiyor.) Karar: `ref` modu KALICI; tüm sonuçlar `ops_impl='ref'`
 ile üretildi (`ops_impl` ve `ops_impl_fallback_error` alanları JSON'da).
 
+## Baseline ve güven aralığı altyapısı (hazırlandı, Colab'da HENÜZ koşulmadı)
+
+- **`no_attack` baseline** (`ATTACK_NAMES[0]`): site'ın gerçek, değiştirilmemiş
+  ağırlığı; `unprotected` = 4 dürüst siteyle normal FedAvg, `poisoned_alone`
+  = temiz site tek başına. Aynı seed (0) ve `num_images_per_class=20` ile
+  koşulunca tüm saldırı matrisleri bununla karşılaştırılabilir. Sonuç
+  gelmeden "DR-4 istenince DR-0 üretiliyor" ifadesi KESİNLEŞMİŞ sayılmaz —
+  temiz modelde de olabilir.
+- **`--num-images-per-class N`** (varsayılan quick=20, full/custom=200) ve
+  **`--seeds 0,1,2`**. Varsayılandan farklı N ve seed'ler ayrı sonuç anahtarı
+  alır (`__n50`, `__seed1`); seed=0 + varsayılan N eski anahtarı korur, bu
+  yüzden mevcut sonuçlar yeniden hesaplanmaz. FID/KID yalnızca ilk seed'de
+  hesaplanır (seed'e bağlı değil, pahalı).
+- **Seed'in neyi değiştirdiği:** üretilen z'ler ve KID alt-örneklemesi.
+  Gerçek görüntü seti SABİT (sınıfın ilk N görüntüsü) — yani varyans
+  tahmini gerçek-örnek seçiminden gelen belirsizliği KAPSAMAZ.
+- Süre (0,498 s/görüntü, ref; yalnızca üretim): 20 görüntü/sınıf → 100
+  görüntü ≈ 50 s/koşul-seed; 7 saldırı × 3 koşul = 21 koşul ≈ 17,5 dk/seed
+  (yalnız baseline: 3 koşul ≈ 2,5 dk). 50 görüntü/sınıf → 250 görüntü ≈ 125 s;
+  21 koşul ≈ 44 dk/seed, 3 seed ≈ 2,2 sa. Gerçek-görüntü yükleme ve Inception
+  çıkarımı EK süredir (ölçülmedi).
+- Sonuçlar birden çok seed için henüz otomatik özetlenmiyor (ortalama/std
+  hesabı yok) — baseline görüldükten sonra kaç örnek/seed gerektiğine
+  karar verilip eklenecek.
+
 ## Sınırlılıklar (makalede açıkça yer almalı)
 
 1. **FID ölçülmedi.** `ref` modunda ölçülen 0,498 s/görüntü ile

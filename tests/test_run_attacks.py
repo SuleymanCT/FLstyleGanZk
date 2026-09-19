@@ -16,6 +16,7 @@ from scripts.run_attacks import (
     build_poisoned_alone_global,
     estimate_full_mode_cost,
     parse_args,
+    parse_seeds,
     pick_default_gen_batch_size,
     resolve_training_options_path,
     result_key,
@@ -102,7 +103,11 @@ def test_all_declared_attack_names_are_handled_by_apply_attack():
     site, prev = _synthetic_site_and_prev()
     for name in ATTACK_NAMES:
         poisoned, modified_keys = apply_attack(name, poisoned_site_state=site, prev_global_state=prev)
-        assert isinstance(poisoned, dict) and modified_keys
+        assert isinstance(poisoned, dict)
+        if name == "no_attack":
+            assert modified_keys == []  # baseline: hiçbir anahtar değişmez
+        else:
+            assert modified_keys
 
 
 # --- resolve_training_options_path (gerçek pkl gerekmeden, sentetik dizin ağacı) ---
@@ -227,3 +232,69 @@ def test_build_poisoned_alone_global_uses_poisoned_state_directly_no_averaging()
 def test_build_poisoned_alone_global_only_includes_the_poisoned_site():
     result = build_poisoned_alone_global({"a": torch.zeros(1)}, poisoned_site=3)
     assert result["included_sites"] == [3]
+
+
+# --- no_attack baseline ---
+# Faz F'nin ilk sınırlılığı: saldırısız temel matris yoktu, "DR-4 istenince
+# DR-0 üretiliyor" ifadesi temiz modelde de doğru olabilirdi. no_attack
+# tüm saldırı matrislerinin karşılaştırma referansı.
+
+
+def test_no_attack_is_first_declared_attack_and_leaves_state_untouched():
+    assert ATTACK_NAMES[0] == "no_attack"
+    site, prev = _synthetic_site_and_prev()
+    result, modified_keys = apply_attack("no_attack", poisoned_site_state=site, prev_global_state=prev)
+    assert modified_keys == []
+    assert set(result) == set(site)
+    for key in site:
+        assert torch.equal(result[key], site[key])
+
+
+def test_no_attack_delta_norm_equals_natural_drift():
+    from orchestrator.aggregate import compute_delta_norm
+
+    site, prev = _synthetic_site_and_prev()
+    result, _ = apply_attack("no_attack", poisoned_site_state=site, prev_global_state=prev)
+    assert compute_delta_norm(prev, result) == pytest.approx(compute_delta_norm(prev, site))
+    assert compute_delta_norm(site, result) == 0.0
+
+
+# --- result_key / parse_seeds / CLI (--num-images-per-class, --seeds) ---
+
+
+def test_result_key_legacy_format_preserved_for_default_settings():
+    # Daha önce Colab'da hesaplanmış sonuçlar (eski anahtar) yeniden hesaplanmadan atlanmalı.
+    assert result_key("random_weights", "unprotected", seed=0, num_images_per_class=20, default_num_images_per_class=20) == "random_weights__unprotected"
+
+
+def test_result_key_non_default_num_images_and_seed_get_distinct_keys():
+    base = result_key("a", "c", seed=0, num_images_per_class=20, default_num_images_per_class=20)
+    n50 = result_key("a", "c", seed=0, num_images_per_class=50, default_num_images_per_class=20)
+    s1 = result_key("a", "c", seed=1, num_images_per_class=20, default_num_images_per_class=20)
+    both = result_key("a", "c", seed=2, num_images_per_class=50, default_num_images_per_class=20)
+    assert n50 == "a__c__n50" and s1 == "a__c__seed1" and both == "a__c__n50__seed2"
+    assert len({base, n50, s1, both}) == 4
+
+
+def test_parse_seeds_valid_and_whitespace_tolerant():
+    assert parse_seeds("0,1,2") == [0, 1, 2]
+    assert parse_seeds(" 3 , 5 ") == [3, 5]
+    assert parse_seeds("7") == [7]
+
+
+def test_parse_seeds_rejects_empty_non_int_and_duplicates():
+    with pytest.raises(ValueError, match="boş"):
+        parse_seeds(" , ")
+    with pytest.raises(ValueError, match="tamsayı"):
+        parse_seeds("0,a")
+    with pytest.raises(ValueError, match="yinelenen"):
+        parse_seeds("1,1")
+
+
+def test_parse_args_num_images_per_class_and_seeds_defaults_and_overrides():
+    args = parse_args([])
+    assert args.num_images_per_class is None
+    assert args.seeds == "0"
+    args = parse_args(["--num-images-per-class", "50", "--seeds", "0,1,2"])
+    assert args.num_images_per_class == 50
+    assert args.seeds == "0,1,2"

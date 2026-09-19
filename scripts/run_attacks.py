@@ -95,6 +95,14 @@ Kullanım (Colab'da):
     python -m scripts.run_attacks --env colab --round 10 --metrics-mode custom --fid-num-gen 5000  # 'ref'te 'full' pratik değilse
     python -m scripts.run_attacks --env colab --round 10 --ops-impl ref         # CUDA derlemesini hiç deneme, doğrudan ref
     python -m scripts.run_attacks --env colab --round 10 --device cpu          # GPU'da batch=1 bile OOM verirse
+
+Baseline (`no_attack`) + güven aralığı altyapısı:
+    # sadece baseline (mevcut sonuçlar eski anahtarlarla korunur/atlanır):
+    python -m scripts.run_attacks --env colab --round 10 --metrics-mode quick --only-attack no_attack
+    # TÜM saldırılar + baseline tek koşuda (mevcut olanlar atlanır, eksik olan no_attack hesaplanır):
+    python -m scripts.run_attacks --env colab --round 10 --metrics-mode quick
+    # 50 görüntü/sınıf, 3 seed (ayrı anahtarlar: __n50, __seed1, __seed2 — eski sonuçları EZMEZ):
+    python -m scripts.run_attacks --env colab --round 10 --metrics-mode quick --num-images-per-class 50 --seeds 0,1,2
 """
 
 from __future__ import annotations
@@ -137,6 +145,7 @@ SWAP_ROW_A, SWAP_ROW_B = 0, 4  # DR-0 / DR-4 (kullanıcının belirttiği saldı
 NUM_SITES = 4  # FedAvg'daki toplam site sayısı — compensated_swap_embed_rows'un seyrelme telafisi bunu kullanır
 
 ATTACK_NAMES = (
+    "no_attack",  # BASELINE: saldırısız, 4 dürüst site — tüm saldırı matrislerinin karşılaştırma referansı
     "random_weights", "scaled_poison_10x", "scaled_poison_50x", "scaled_poison_100x",
     "conditional_poison", "conditional_poison_compensated",
 )
@@ -164,8 +173,37 @@ OPS_IMPL_DIAGNOSTICS: dict = {"fallback_error": None, "fallback_traceback": None
 # ---------------------------------------------------------------------------
 
 
-def result_key(attack_name: str, condition: str) -> str:
-    return f"{attack_name}__{condition}"
+def result_key(
+    attack_name: str, condition: str, *, seed: int = 0, num_images_per_class: int | None = None,
+    default_num_images_per_class: int | None = None,
+) -> str:
+    """Sonuç anahtarı. GERİYE UYUMLU: seed=0 ve varsayılan örnek sayısı için
+    ESKİ anahtar (`<saldırı>__<koşul>`) aynen korunur — daha önce Colab'da
+    hesaplanmış sonuçlar yeniden hesaplanmadan atlanır. Varsayılandan FARKLI
+    bir örnek sayısı (`__n50`) ya da seed (`__seed1`) ayrı anahtar alır;
+    böylece farklı ayarlarla üretilmiş sonuçlar birbirini EZMEZ/yanlışlıkla
+    atlanmaz."""
+    key = f"{attack_name}__{condition}"
+    if num_images_per_class is not None and num_images_per_class != default_num_images_per_class:
+        key += f"__n{num_images_per_class}"
+    if seed != 0:
+        key += f"__seed{seed}"
+    return key
+
+
+def parse_seeds(raw: str) -> list[int]:
+    """`"0,1,2"` -> `[0,1,2]`. Boş/tamsayı-olmayan/yinelenen değer net hata
+    verir (sessizce düzeltilmez)."""
+    parts = [p.strip() for p in raw.split(",") if p.strip()]
+    if not parts:
+        raise ValueError(f"--seeds boş olamaz: {raw!r}")
+    try:
+        seeds = [int(p) for p in parts]
+    except ValueError as e:
+        raise ValueError(f"--seeds tamsayı listesi olmalı (ör. '0,1,2'), alınan: {raw!r}") from e
+    if len(set(seeds)) != len(seeds):
+        raise ValueError(f"--seeds yinelenen değer içeriyor: {seeds}")
+    return seeds
 
 
 def pick_default_gen_batch_size(ops_impl: str) -> int:
@@ -198,6 +236,10 @@ def apply_attack(attack_name: str, *, poisoned_site_state: dict, prev_global_sta
     modified_keys)` döner. `modified_keys`: saldırının KAVRAMSAL
     olarak hedeflediği anahtar kümesi (ZK kapsam analizi için —
     `attacks/detection.py: attack_touches_zk_proven_scope`)."""
+    if attack_name == "no_attack":
+        # Baseline: site'ın GERÇEK (değiştirilmemiş) ağırlığı — `modified_keys` boş.
+        return dict(poisoned_site_state), []
+
     if attack_name == "random_weights":
         poisoned = randomize_state_dict(poisoned_site_state, generator=torch.Generator().manual_seed(0))
         return poisoned, list(poisoned.keys())
@@ -358,6 +400,9 @@ def evaluate_condition(
     device,
     gen_batch_size: int,
     fid_num_gen: int,
+    num_images_per_class: int,
+    seed: int = 0,
+    run_fid: bool = True,
 ) -> dict:
     """Bir (saldırı,koşul) çiftinin GERÇEK global ağırlığını `g_ema_shell`'e
     yükleyip FID/KID (`--metrics-mode full`/`custom`) + sınıf-tutarlılığı
@@ -365,15 +410,24 @@ def evaluate_condition(
     görüntüsü pratik OLMADIĞINDA — `eval.metrics.run_custom_fid_kid`
     ile YAPILANDIRILABİLİR (`fid_num_gen`) bir örnekle GERÇEK bir
     FID/KID hesaplar, ama sonucu `13.13` referansıyla KIYASLANAMAZ
-    olarak (`fid_comparable_to_reference=False`) İŞARETLER."""
+    olarak (`fid_comparable_to_reference=False`) İŞARETLER.
+
+    `seed`: `class_confusion_matrix`'in üretim (z) ve KID alt-küme örneklemesi
+    tohumu. Gerçek görüntü seti sabit (sınıfın İLK N görüntüsü), yani seed
+    varyansı SADECE üretilen z'lerden ve KID alt-örneklemesinden gelir.
+    `run_fid=False`: aynı (saldırı,koşul) için birden fazla seed
+    koşulurken FID/KID'i (seed'e bağlı DEĞİL, çok pahalı) tekrar
+    hesaplamamak için."""
     from eval.metrics import class_confusion_matrix, run_custom_fid_kid, run_official_metric
 
     t0 = time.perf_counter()
     g_ema_shell.load_state_dict(global_state)
     g_ema_shell.to(device).eval()
 
-    result: dict = {}
-    if metrics_mode == "full":
+    result: dict = {"seed": seed}
+    if not run_fid and metrics_mode in ("full", "custom"):
+        print(f"[run_attacks]   seed={seed}: FID/KID bu (saldırı,koşul) için ilk seed'de zaten hesaplandı, atlanıyor.")
+    elif metrics_mode == "full":
         for metric_name in ("fid50k_full", "kid50k_full"):
             t_metric = time.perf_counter()
             metric_result = run_official_metric(
@@ -398,11 +452,11 @@ def evaluate_condition(
     else:
         print("[run_attacks]   --metrics-mode quick: resmi fid50k_full/kid50k_full ATLANDI (sadece sınıf-tutarlılığı koşuluyor).")
 
-    num_images_per_class = QUICK_CLASS_IMAGES_PER_CLASS if metrics_mode == "quick" else FULL_CLASS_IMAGES_PER_CLASS
     t_confusion = time.perf_counter()
     confusion = class_confusion_matrix(
         g_ema_shell, dataset_kwargs=metric_options["dataset_kwargs"], num_classes=DR_NUM_CLASSES,
         z_dim=dims["z_dim"], device=device, num_images_per_class=num_images_per_class, batch_size=gen_batch_size,
+        seed=seed,
     )
     result["class_confusion"] = confusion
     result["class_confusion_seconds"] = time.perf_counter() - t_confusion
@@ -452,6 +506,16 @@ def parse_args(argv=None) -> argparse.Namespace:
              "(çok daha yavaş — süre ölçülüp loglanır).",
     )
     parser.add_argument(
+        "--num-images-per-class", type=int, default=None,
+        help=f"Sınıf başına üretilen/gerçek görüntü sayısı (sınıf-tutarlılığı matrisi). Varsayılan: quick={QUICK_CLASS_IMAGES_PER_CLASS}, "
+             f"full/custom={FULL_CLASS_IMAGES_PER_CLASS}. Varsayılandan farklı değer ayrı sonuç anahtarı alır (`__n<N>`).",
+    )
+    parser.add_argument(
+        "--seeds", default="0",
+        help="Virgülle ayrılmış üretim/KID tohumları (ör. '0,1,2') — varyansı ölçmek için. Her seed AYRI sonuç anahtarı alır "
+             "(seed 0 eski anahtarı korur). FID/KID sadece İLK seed'de hesaplanır (seed'e bağlı değil, pahalı).",
+    )
+    parser.add_argument(
         "--gen-batch-size", type=int, default=None,
         help="Görüntü üretim batch boyutu. Varsayılan: ops_impl'e göre otomatik (ref=1, cuda=32) — "
              "bkz. DEFAULT_GEN_BATCH_SIZE_BY_OPS_IMPL.",
@@ -483,6 +547,10 @@ def main(argv=None) -> int:
         raise ValueError(f"Bilinmeyen saldırı adı/ları: {unknown}. Geçerli: {ATTACK_NAMES}")
 
     fid_num_gen = args.fid_num_gen or DEFAULT_CUSTOM_FID_NUM_GEN
+    seeds = parse_seeds(args.seeds)
+    default_num_images_per_class = QUICK_CLASS_IMAGES_PER_CLASS if args.metrics_mode == "quick" else FULL_CLASS_IMAGES_PER_CLASS
+    num_images_per_class = args.num_images_per_class or default_num_images_per_class
+    print(f"[run_attacks] seeds={seeds} num_images_per_class={num_images_per_class} (varsayılan={default_num_images_per_class})")
     print(f"[run_attacks] round={args.round} poisoned_site={args.poisoned_site} attacks={attack_names} metrics_mode={args.metrics_mode} fid_num_gen={fid_num_gen}")
 
     if args.device == "auto":
@@ -541,12 +609,20 @@ def main(argv=None) -> int:
         site_states[args.poisoned_site] = poisoned_state
 
         for condition in CONDITIONS:
-            key = result_key(attack_name, condition)
-            if key in all_results and not args.force:
-                print(f"[run_attacks] '{key}' zaten sonuçlanmış, atlanıyor (--force ile yeniden çalıştır).")
+            pending_seeds = []
+            for seed in seeds:
+                key = result_key(
+                    attack_name, condition, seed=seed, num_images_per_class=num_images_per_class,
+                    default_num_images_per_class=default_num_images_per_class,
+                )
+                if key in all_results and not args.force:
+                    print(f"[run_attacks] '{key}' zaten sonuçlanmış, atlanıyor (--force ile yeniden çalıştır).")
+                    continue
+                pending_seeds.append((seed, key))
+            if not pending_seeds:
                 continue
 
-            print(f"[run_attacks] --- koşul: {condition} ---")
+            print(f"[run_attacks] --- koşul: {condition} (seed'ler: {[sd for sd, _ in pending_seeds]}) ---")
             if condition == "unprotected":
                 aggregation = {"global_state": build_unprotected_global(site_states), "included_sites": list(site_states), "gate_results": None}
             elif condition == "protected":
@@ -555,53 +631,63 @@ def main(argv=None) -> int:
                 aggregation = build_poisoned_alone_global(poisoned_state, args.poisoned_site)
 
             poisoned_included = args.poisoned_site in aggregation["included_sites"]
-            print(f"[run_attacks] '{key}': zehirli site dahil mi? {poisoned_included}")
+            print(f"[run_attacks] '{attack_name}__{condition}': zehirli site dahil mi? {poisoned_included}")
 
-            metrics_result = evaluate_condition(
-                global_state=aggregation["global_state"], g_ema_shell=g_ema_shell, dims=dims,
-                metric_options=metric_options, dataset_root_override=args.dataset_root,
-                metrics_mode=args.metrics_mode, device=device, gen_batch_size=gen_batch_size,
-                fid_num_gen=fid_num_gen,
-            )
+            for seed, key in pending_seeds:
+                metrics_result = evaluate_condition(
+                    global_state=aggregation["global_state"], g_ema_shell=g_ema_shell, dims=dims,
+                    metric_options=metric_options, dataset_root_override=args.dataset_root,
+                    metrics_mode=args.metrics_mode, device=device, gen_batch_size=gen_batch_size,
+                    fid_num_gen=fid_num_gen, num_images_per_class=num_images_per_class, seed=seed,
+                    run_fid=(seed == seeds[0]),
+                )
 
-            all_results[key] = {
-                "attack": attack_name,
-                "condition": condition,
-                "ops_impl": ops_impl_used,
-                "ops_impl_fallback_error": OPS_IMPL_DIAGNOSTICS["fallback_error"],
-                "device": str(device),
-                "gen_batch_size": gen_batch_size,
-                "poisoned_site_included": poisoned_included,
-                "delta_norm": delta_norm,
-                "natural_delta_norm": natural_delta_norm,
-                "attack_only_delta_norm": attack_only_delta_norm,
-                "norm_caught": norm_caught,
-                "zk_in_scope": zk_in_scope,
-                "zk_caught": zk_caught,
-                "modified_keys_count": len(modified_keys),
-                **metrics_result,
-            }
-            save_attack_results(all_results, results_path)
-            print(f"[run_attacks] '{key}' tamamlandı, {results_path} güncellendi.")
+                all_results[key] = {
+                    "attack": attack_name,
+                    "condition": condition,
+                    "ops_impl": ops_impl_used,
+                    "ops_impl_fallback_error": OPS_IMPL_DIAGNOSTICS["fallback_error"],
+                    "device": str(device),
+                    "gen_batch_size": gen_batch_size,
+                    "num_images_per_class": num_images_per_class,
+                    "poisoned_site_included": poisoned_included,
+                    "delta_norm": delta_norm,
+                    "natural_delta_norm": natural_delta_norm,
+                    "attack_only_delta_norm": attack_only_delta_norm,
+                    "norm_caught": norm_caught,
+                    "zk_in_scope": zk_in_scope,
+                    "zk_caught": zk_caught,
+                    "modified_keys_count": len(modified_keys),
+                    **metrics_result,
+                }
+                save_attack_results(all_results, results_path)
+                print(f"[run_attacks] '{key}' tamamlandı, {results_path} güncellendi.")
 
-            if not extrapolation_logged:
-                extrapolation_logged = True
-                confusion = metrics_result["class_confusion"]
-                seconds_per_image = confusion["generation_seconds"] / confusion["num_generated_images"]
-                print(f"[run_attacks] Üretim hızı (ops_impl={ops_impl_used}, device={device}): {seconds_per_image:.3f}s/görüntü ({confusion['num_generated_images']} görüntü, {confusion['generation_seconds']:.1f}s).")
-                if ops_impl_used == "ref" or device.type == "cpu":
-                    cost = estimate_full_mode_cost(seconds_per_image, num_conditions=len(attack_names) * len(CONDITIONS))
+                if not extrapolation_logged:
+                    extrapolation_logged = True
+                    confusion = metrics_result["class_confusion"]
+                    seconds_per_image = confusion["generation_seconds"] / confusion["num_generated_images"]
+                    print(f"[run_attacks] Üretim hızı (ops_impl={ops_impl_used}, device={device}): {seconds_per_image:.3f}s/görüntü ({confusion['num_generated_images']} görüntü, {confusion['generation_seconds']:.1f}s).")
+                    num_conditions_total = len(attack_names) * len(CONDITIONS) * len(seeds)
+                    quick_hours = seconds_per_image * DR_NUM_CLASSES * num_images_per_class * num_conditions_total / 3600.0
                     print(
-                        f"[run_attacks] UYARI: '{ops_impl_used}'/{device} modunda --metrics-mode full tahmini maliyet: "
-                        f"koşul başına ~{cost['hours_per_condition']:.1f} saat, "
-                        f"TOPLAM ({cost['num_conditions']} koşul) ~{cost['hours_total']:.1f} saat "
-                        f"(SADECE görüntü üretimi — Inception özellik çıkarımı/KID hesaplaması HARİÇ, ek zaman gerektirir). "
-                        f"Bu pratik olmayabilir — alternatifler: (a) --only-attack ile saldırı sayısını azalt, "
-                        f"(b) '--metrics-mode custom --fid-num-gen {DEFAULT_CUSTOM_FID_NUM_GEN}' ile GERÇEK ama küçük "
-                        f"örnekli bir FID/KID (13.13 İLE KARŞILAŞTIRILAMAZ, ama bu koşumun kendi saldırı×koruma "
-                        f"karşılaştırması için yeterli), (c) CUDA custom op derlemesini bu Colab ortamında (farklı "
-                        f"PyTorch/CUDA sürümü, ör. `pip install torch==<uyumlu sürüm>`) çalışır hale getirmeyi dene."
+                        f"[run_attacks] Bu koşumun (sınıf-tutarlılığı, {len(attack_names)} saldırı × {len(CONDITIONS)} koşul × "
+                        f"{len(seeds)} seed, {num_images_per_class} görüntü/sınıf) tahmini toplam üretim süresi ~{quick_hours:.2f} saat "
+                        f"(zaten sonuçlanmış olanlar atlanırsa daha az)."
                     )
+                    if ops_impl_used == "ref" or device.type == "cpu":
+                        cost = estimate_full_mode_cost(seconds_per_image, num_conditions=len(attack_names) * len(CONDITIONS))
+                        print(
+                            f"[run_attacks] UYARI: '{ops_impl_used}'/{device} modunda --metrics-mode full tahmini maliyet: "
+                            f"koşul başına ~{cost['hours_per_condition']:.1f} saat, "
+                            f"TOPLAM ({cost['num_conditions']} koşul) ~{cost['hours_total']:.1f} saat "
+                            f"(SADECE görüntü üretimi — Inception özellik çıkarımı/KID hesaplaması HARİÇ, ek zaman gerektirir). "
+                            f"Bu pratik olmayabilir — alternatifler: (a) --only-attack ile saldırı sayısını azalt, "
+                            f"(b) '--metrics-mode custom --fid-num-gen {DEFAULT_CUSTOM_FID_NUM_GEN}' ile GERÇEK ama küçük "
+                            f"örnekli bir FID/KID (13.13 İLE KARŞILAŞTIRILAMAZ, ama bu koşumun kendi saldırı×koruma "
+                            f"karşılaştırması için yeterli), (c) CUDA custom op derlemesini bu Colab ortamında (farklı "
+                            f"PyTorch/CUDA sürümü) çalışır hale getirmeyi dene."
+                        )
 
         del poisoned_state, site_states
         gc.collect()

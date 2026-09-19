@@ -1335,6 +1335,16 @@ custom --fid-num-gen 5000` ≈1,4 sa/koşul, tam 18 koşul ≈25 sa, makul
 alt küme ≈8–9 sa); saldırısız temel matris yok; 20 görüntü/sınıf, tek
 tohum; tek round/site.
 
+**8. Sınırlılık kapatma altyapısı (kod hazır, Colab'da koşulmadı):**
+`no_attack` baseline saldırısı eklendi (tüm saldırı matrislerinin
+referansı; modified_keys boş). `--num-images-per-class N` ve `--seeds
+0,1,2` eklendi; varsayılandan farklı ayarlar ayrı sonuç anahtarı alır
+(`__n50`, `__seed1`), seed 0 + varsayılan N eski anahtarı korur (mevcut
+sonuçlar yeniden hesaplanmaz). FID/KID yalnızca ilk seed'de. Çok-seed
+özetleme (ort/std) baseline sonucu görüldükten sonra. `run_attacks.py`
+dosyası yanlışlıkla CRLF'e dönmüştü, LF'ye geri çevrildi. 7 yeni test;
+374 passed, 2 skipped.
+
 **Kabul (İKİ ayrı madde):**
 1. Saldırı × koruma matrisi (norm/ZK/sınıf-tutarlılığı) — **KARŞILANDI
    (quick mod, GERÇEK Colab verisiyle)**; FID/KID kısmı ölçülmedi
