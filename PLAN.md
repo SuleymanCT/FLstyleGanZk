@@ -1345,6 +1345,23 @@ sonuçlar yeniden hesaplanmaz). FID/KID yalnızca ilk seed'de. Çok-seed
 dosyası yanlışlıkla CRLF'e dönmüştü, LF'ye geri çevrildi. 7 yeni test;
 374 passed, 2 skipped.
 
+**9. `no_attack` baseline Colab'da koşuldu — saldırı bulgusu temiz biçimde
+kanıtlandı:** temiz model `perceived_class=[0,1,1,3,1]` (yani
+`perceived_class[g] != g` tek başına kanıt değil; DR-4 KID uzayında
+ayırt edilemiyor). Basit takasta saldırılı modelin DR-4 satırı temiz
+DR-0 satırıyla BEŞ HANE aynı (0,0127/0,0525/0,0559/0,0773/0,0710) ve
+tersi — gömme takası KID satırlarında birebir görünüyor. DR-4 istenince
+gerçek DR-0'a KID: temiz 0,0539 → telafili 0,0096 (5,6×, tek başına);
+FedAvg 0,0810 → 0,0453 (1,8×). `perceived_class` temiz [0,1,1,3,1] →
+telafili FedAvg [1,1,1,3,0] (tek başına [2,1,1,3,0]): değişen konumlar
+tam olarak 0 ve 4. **Düzeltme:** önceki "DR-0 tarafı asimetrik" notu
+baseline ile düzeltildi — asimetri saldırıdan değil, DR sınıflarının
+KID uzayındaki doğal konumundan (temiz DR-4 zaten DR-1'e yakın); yalnızca
+telafili varyantın DR-0 satırındaki EK bozulma açıklanamadı (hipotez).
+`docs/phase_f_attacks.md` baseline'a göre yeniden yorumlandı; sınırlılık
+"saldırısız temel yok" KAPANDI, kalan asıl sınırlılık 20 görüntü/tek seed
+(altyapı hazır, koşulmadı) + FID ölçülmedi + tek round/site.
+
 **Kabul (İKİ ayrı madde):**
 1. Saldırı × koruma matrisi (norm/ZK/sınıf-tutarlılığı) — **KARŞILANDI
    (quick mod, GERÇEK Colab verisiyle)**; FID/KID kısmı ölçülmedi

@@ -1,7 +1,7 @@
 # Faz F — Saldırı × Koruma Matrisi (norm kapısı / ZK / sınıf-tutarlılığı)
 
-**Durum: quick mod Colab'da TAMAMLANDI (6 saldırı × 3 koşul). Norm/ZK
-sonuçları ve sınıf-tutarlılığı matrisleri GERÇEK Colab ölçümüdür. FID/KID
+**Durum: quick mod Colab'da TAMAMLANDI (7 saldırı varyantı [`no_attack` baseline dahil] × 3 koşul).
+Norm/ZK sonuçları ve sınıf-tutarlılığı matrisleri GERÇEK Colab ölçümüdür. FID/KID
 ÖLÇÜLMEDİ** (`ref` modunda `fid50k_full` koşul başına ~13,8 saat —
 bkz. "Sınırlılıklar"). Hiçbir sayı uydurulmadı (CLAUDE.md madde 6); bu
 dokümandaki tüm rakamlar konsol/JSON çıktısından alınmıştır.
@@ -19,6 +19,16 @@ düşürmek meşru güncellemelerin ~%1'ini (p99'un tanımı gereği) — ve bu
 sitenin kendi doğal kaymasını (2506,64) — de eleyecektir. Savunmanın ZK
 kısmı ise bu saldırıyı yakalamıyor ve mimari olarak yakalaması da
 BEKLENMİYOR (aşağıda).
+
+**Baseline ile kanıt (`no_attack`):** gömme satır takası KID satırlarında
+birebir görünüyor — basit takasta saldırılı modelin DR-4 satırı, temiz
+modelin DR-0 satırıyla beş hane aynı (0,0127 / 0,0525 / 0,0559 / 0,0773 /
+0,0710), ve tersi. DR-4 istenince gerçek DR-0'a KID: temiz 0,0539 →
+telafili 0,0096 (5,6× düşüş, tek başına); FedAvg sonrası 0,0810 → 0,0453
+(1,8×, sinyal ayakta). `perceived_class` temiz `[0,1,1,3,1]`'den telafili
+`[1,1,1,3,0]`'a (FedAvg) değişiyor: değişen konumlar tam olarak müdahale
+edilen 0 ve 4. Önceki "DR-0 tarafı asimetrik" notu baseline ile düzeltildi
+(asimetri temiz modelin doğal özelliği; bkz. ilgili bölüm).
 
 ## Amaç
 
@@ -201,21 +211,27 @@ açıkça taşır (kullanıcının "her çıktıda net belirt" isteği).
    tutarlılığı matrisi hesaplanır.
 
 
-## Ana tablo — norm kapısı (tau=3000, GERÇEK ölçüm)
+## Ana tablo — norm kapısı (tau=3000, GERÇEK ölçüm) ve baseline
 
-| saldırı | ‖ΔG‖ | tau'ya oran | norm kapısı | sonuç |
-|---|---|---|---|---|
-| random_weights | 59 592 | 19,9× | YAKALADI | zehirli site dışlandı |
-| scaled_poison_10x | 25 066 | 8,4× | YAKALADI | zehirli site dışlandı |
-| scaled_poison_50x | 125 332 | 41,8× | YAKALADI | zehirli site dışlandı |
-| scaled_poison_100x | 250 664 | 83,6× | YAKALADI | zehirli site dışlandı |
-| conditional_poison (basit takas) | 2 507 | 0,84× | GEÇTİ | site dahil; FedAvg'da sinyal seyreliyor |
-| conditional_poison_compensated | 2 519,53 | 0,84× | GEÇTİ | site dahil; FedAvg'da sinyal korunuyor |
+Baseline = `no_attack`: sitenin gerçek, değiştirilmemiş ağırlığı; ‖ΔG‖ =
+doğal kayma = 2 506,64. "Baseline'a oran" = ‖ΔG‖ / 2 506,64.
 
-ZK sütunu bilerek ayrı yazılmadı: `zk_caught` altı saldırının HEPSİ için
-`False` ve bu bir Colab ölçümü değil KOD GARANTİSİ
-(`verify_commitment_consistency` bir state'i kendisiyle karşılaştırır) —
-bkz. "ZK'nın doğru çerçevesi".
+| saldırı | ‖ΔG‖ | baseline'a oran | tau'ya oran | norm kapısı | sonuç |
+|---|---|---|---|---|---|
+| **no_attack (baseline)** | 2 506,64 | 1,000× | 0,84× | GEÇTİ (meşru) | site dahil |
+| random_weights | 59 592 | 23,8× | 19,9× | YAKALADI | zehirli site dışlandı |
+| scaled_poison_10x | 25 066 | 10,0× | 8,4× | YAKALADI | zehirli site dışlandı |
+| scaled_poison_50x | 125 332 | 50,0× | 41,8× | YAKALADI | zehirli site dışlandı |
+| scaled_poison_100x | 250 664 | 100,0× | 83,6× | YAKALADI | zehirli site dışlandı |
+| conditional_poison (basit takas) | 2 507 | 1,000× | 0,84× | GEÇTİ | site dahil; FedAvg'da sinyal seyreliyor |
+| conditional_poison_compensated | 2 519,53 | 1,005× | 0,84× | GEÇTİ | site dahil; FedAvg'da sinyal korunuyor |
+
+Norm açısından koşullu saldırılar baseline'dan AYIRT EDİLEMİYOR (%0,0 ve
+%0,5 fark); ölçekli saldırılar ise baseline'ın tam 10/50/100 katı çıkıyor
+(ΔG'yi ölçekledikleri için, beklenen). ZK sütunu bilerek ayrı yazılmadı:
+`zk_caught` tüm saldırılar için `False` ve bu bir Colab ölçümü değil KOD
+GARANTİSİ (`verify_commitment_consistency` bir state'i kendisiyle
+karşılaştırır) — bkz. "ZK'nın doğru çerçevesi".
 
 ### Telafinin ‖ΔG‖ üzerindeki etkisi (aritmetik doğrulaması)
 
@@ -226,33 +242,77 @@ bkz. "ZK'nın doğru çerçevesi".
 √(2506,64² + 255,33²) ≈ 2519,5 — katkı doğal kaymaya yaklaşık DİK
 (kareler toplamı) bindiği için toplam ancak %0,5 artıyor. Basit
 takasın katkısı ≈ 255,33/4 ≈ 64 (kompanzasyon embed delta'sını tam
-`NUM_SITES=4` kat büyütür, birim testle doğrulanmıştır), toplam 2507.
-Sonuç: telafi saldırıyı 4× güçlendirirken norm-görünürlüğünü neredeyse
-hiç artırmıyor.
+`NUM_SITES=4` kat büyütür, birim testle doğrulanmıştır). Telafi saldırıyı
+4× güçlendirirken norm-görünürlüğünü neredeyse hiç artırmıyor.
 
-## Koşullu zehirleme varyantlarının sınıf-tutarlılığı karşılaştırması
+## Sınıf-tutarlılığı: tüm matrisler `no_attack` baseline'ına göre okunur
 
-Ölçüt: DR-4 istendiğinde ÜRETİLEN görüntüler ile gerçek DR-0 / gerçek
-DR-4 arasındaki KID (satır DR-4; düşük = benzer). Takas başarılıysa
-DR-0'a olan KID, DR-4'e olandan KÜÇÜK olmalı (oran = KID(DR-4)/KID(DR-0) > 1).
+Matrisler mutlak değerlerle DEĞİL baseline'a göre yorumlanır: baseline
+gösteriyor ki temiz modelde bile `perceived_class = [0, 1, 1, 3, 1]`
+(`swap_detected = [F, F, T, F, T]`) — yani `perceived_class[g] != g` bayrağı
+TEK BAŞINA saldırı kanıtı DEĞİL (DR-2 ve DR-4 temiz modelde de "kendi
+sınıfına en yakın" çıkmıyor). Kanıt, baseline'a göre DEĞİŞİMDİR.
 
-| durum | DR-4 → gerçek DR-0 | DR-4 → gerçek DR-4 | oran | perceived_class[4] |
+### En güçlü kanıt: gömme satır takası KID satırlarında birebir görünüyor
+
+Zehirli site TEK BAŞINA (`poisoned_alone`, seyreltme yok; satır = istenen
+sınıf, sütun = gerçek sınıf DR-0..DR-4). Aynı seed ve aynı z'ler
+kullanıldığından takas deterministik olarak izlenebilir:
+
+| | DR-0 | DR-1 | DR-2 | DR-3 | DR-4 |
+|---|---|---|---|---|---|
+| **temiz (`no_attack`), DR-0 satırı** | 0,0127 | 0,0525 | 0,0559 | 0,0773 | 0,0710 |
+| **basit takas, DR-4 satırı** | 0,0127 | 0,0525 | 0,0559 | 0,0773 | 0,0710 |
+| telafili, DR-4 satırı | 0,0096 | 0,0471 | 0,0487 | 0,0642 | 0,0591 |
+| | | | | | |
+| **temiz (`no_attack`), DR-4 satırı** | 0,0539 | 0,0119 | 0,0168 | 0,0195 | 0,0180 |
+| **basit takas, DR-0 satırı** | 0,0539 | 0,0119 | 0,0168 | 0,0195 | 0,0180 |
+| telafili, DR-0 satırı | 0,1151 | 0,0999 | 0,0649 | 0,0719 | 0,0708 |
+
+Basit takasta iki yönde de saldırılı model satırı, temiz modelin
+DİĞER sınıf satırıyla BEŞ HANE aynı: DR-4 istenince model artık temiz
+DR-0 görüntüsü üretiyor (ve tersi). Telafili varyantın DR-4 satırı
+temiz DR-0 satırına çok yakın (0,0096 vs 0,0127 …); DR-0 satırı ise
+aşağıda açıklandığı gibi temiz DR-4 satırından ayrışıyor.
+
+### DR-4 istendiğinde gerçek DR-0'a KID (düşük = DR-0'a benziyor)
+
+| durum | temiz (baseline) | basit takas | telafili | telafili / baseline |
 |---|---|---|---|---|
-| basit takas, zehirli site TEK BAŞINA | 0,0127 | 0,0710 | 5,59 | 0 |
-| basit takas, FedAvg sonrası | 0,0667 | 0,0846 | 1,27 | 0 |
-| **telafili**, zehirli site TEK BAŞINA | 0,0096 | 0,0591 | 6,16 | 0 |
-| **telafili**, FedAvg sonrası | 0,0453 | 0,1075 | **2,37** | 0 |
+| zehirli site TEK BAŞINA | 0,0539 | 0,0127 | 0,0096 | **5,6× düşüş** |
+| FedAvg sonrası (unprotected) | 0,0810 | 0,0667 | 0,0453 | **1,8× düşüş** |
 
-Okuma: (i) tek başına iki varyant da takası açıkça gösteriyor (5,6× /
-6,2×). (ii) Basit takasın sinyali FedAvg'da 1,27'ye çöküyor (seyrelme —
-H1, doğrulandı). (iii) Telafi FedAvg sonrası oranı 1,27 → 2,37'ye çıkarıp
-sinyalin bir kısmını GERİ KAZANDIRIYOR — tam telafi (oranın tek-başına
-değerine dönmesi) olmadı: formül ortalama GİRDİ satırını hedefe eşitler,
-ama üretilen görüntüler mapping/synthesis'in geri kalanından da geçtiği
-için KID uzayına doğrusal yansımıyor. (iv) `perceived_class[4]=0` dört
-durumda da.
+Oran ölçütü KID(DR-4)/KID(DR-0) (> 1 → üretim gerçek DR-0'a, < 1 gerçek
+DR-4'e daha yakın): temiz tek başına 0,0180/0,0539 = 0,33; temiz FedAvg
+0,0526/0,0810 = 0,65; basit tek başına 5,59; basit FedAvg 1,27;
+telafili tek başına 6,16; telafili FedAvg 2,37. Temiz modelde oran
+HEP < 1'dir; saldırı onu > 1'e çevirir. Seyrelme sonrası basit takasın
+sinyali (0,0810 → 0,0667, 1,2×) neredeyse kaybolur; telafi bunu 1,8×'e
+geri çıkarır (tam telafi değil — üretim KID uzayına doğrusal yansımıyor).
 
-### Tam matrisler (satır = istenen sınıf, sütun = gerçek sınıf DR-0..DR-4)
+### `perceived_class` (baseline'a göre)
+
+| durum | perceived_class | temiz [0,1,1,3,1]'e göre değişen konumlar |
+|---|---|---|
+| temiz, tek başına / FedAvg | [0, 1, 1, 3, 1] / [0, 1, 1, 3, 1] | — |
+| telafili, tek başına | [2, 1, 1, 3, 0] | 0. ve 4. |
+| telafili, FedAvg (unprotected) | [1, 1, 1, 3, 0] | 0. ve 4. |
+
+Değişen konumlar tam olarak müdahale edilen sınıflar (0 ve 4); 1, 2, 3
+aynı. (Not: telafili FedAvg matrisinden hesaplanan argmin `[1,1,1,3,0]`'dır;
+`[2,1,1,3,0]` `poisoned_alone` matrisine aittir.)
+
+### Tam matrisler
+
+**Temiz (`no_attack`), FedAvg (unprotected):**
+
+| istenen | DR-0 | DR-1 | DR-2 | DR-3 | DR-4 |
+|---|---|---|---|---|---|
+| DR-0 | 0,0449 | 0,0855 | 0,0948 | 0,1109 | 0,1068 |
+| DR-1 | 0,0913 | 0,0627 | 0,0804 | 0,0868 | 0,0837 |
+| DR-2 | 0,0834 | 0,0483 | 0,0573 | 0,0597 | 0,0630 |
+| DR-3 | 0,0772 | 0,0428 | 0,0445 | 0,0366 | 0,0401 |
+| DR-4 | 0,0810 | 0,0420 | 0,0515 | 0,0471 | 0,0526 |
 
 **Telafili, FedAvg sonrası (unprotected; protected aynı girdi ve aynı
 tohumla hesaplandığından — zehirli site norm kapısını geçip dahil
@@ -266,7 +326,17 @@ edildiği için — aynıdır):**
 | DR-3 | 0,0772 | 0,0428 | 0,0445 | 0,0366 | 0,0401 |
 | DR-4 | 0,0453 | 0,0859 | 0,0955 | 0,1120 | 0,1075 |
 
-**Telafili, zehirli site TEK BAŞINA (`poisoned_alone`):**
+(DR-1, DR-2, DR-3 satırları baseline ile BİREBİR aynı — saldırı yalnızca
+0. ve 4. satırları değiştiriyor.)
+
+**Temiz, zehirli-site-tek-başına (`no_attack / poisoned_alone`):**
+`perceived_class=[0,1,1,3,1]`; DR-0 ve DR-4 satırları yukarıdaki
+satır-takası tablosunda, DR-1/2/3 satırları:
+`[0,0500, 0,0172, 0,0298, 0,0390, 0,0342]`,
+`[0,0616, 0,0164, 0,0206, 0,0305, 0,0299]`,
+`[0,0563, 0,0176, 0,0188, 0,0121, 0,0143]`.
+
+**Telafili, tek başına (`poisoned_alone`):**
 
 | istenen | DR-0 | DR-1 | DR-2 | DR-3 | DR-4 |
 |---|---|---|---|---|---|
@@ -276,21 +346,29 @@ edildiği için — aynıdır):**
 | DR-3 | 0,0563 | 0,0176 | 0,0188 | 0,0121 | 0,0143 |
 | DR-4 | 0,0096 | 0,0471 | 0,0487 | 0,0642 | 0,0591 |
 
-**Basit takas, zehirli site TEK BAŞINA (H1 testi):**
-`perceived_class=[1,1,1,3,0]`; DR-4 satırı `[0,0127, 0,0525, 0,0559, 0,0773, 0,0710]`,
-DR-0 satırı `[0,0539, 0,0119, 0,0168, 0,0195, 0,0180]`.
+### DÜZELTME: "DR-0 tarafı asimetrik" bulgusu — baseline ile doğrulanan açıklama
 
-### Gözlem: takasın iki yönü asimetrik
+Önceki sürümde "takasın iki yönü asimetrik (DR-0 istenince DR-4'e
+kaymıyor)" diye not düşülmüş ve bir hipotez (ekstrapolasyon/veri-manifoldu)
+öne sürülmüştü. **Baseline bunu düzeltiyor: asimetri saldırıdan değil,
+DR sınıflarının KID uzayındaki doğal konumundan geliyor.** Temiz
+modelde DR-4 istenince üretim zaten gerçek DR-1'e en yakın (`perceived_class[4]=1`;
+DR-4 satırı 0,0119 → DR-1, 0,0180 → DR-4): model DR-4 üretimini KID
+uzayında DR-4 olarak "tanımıyor". Takasla DR-0 istenince model temiz
+DR-4 satırını üretiyor (basit takasta iki satır BİREBİR aynı) ve bu
+satırın argmin'i doğal olarak DR-1 — yani "DR-0 → DR-4'e kayma"
+gözlenmemesi, ölçütün DR-4'ü ayırt edememesinin sonucudur, takasın
+başarısızlığının değil. DR-4→DR-0 yönü ise DR-0 sınıfı KID uzayında iyi
+ayrıştığı (temiz `perceived_class[0]=0`, diğer sınıflardan uzak) için net.
 
-DR-4→DR-0 yönü net. DR-0 yönü değil: telafili `poisoned_alone`'da DR-0
-üretimi KENDİ gerçek sınıfına 0,1151 (satırın EN YÜKSEĞİ) — yani DR-0
-üretimi BOZULMUŞ ama DR-4'e KAYMAMIŞ (DR-4'e 0,0708). Basit takasta da
-DR-0 satırında argmin DR-1 (`perceived_class[0]=1`). Olası neden
-(DOĞRULANMADI, hipotez): DR-0 satırı DR-4'ün gömmesinden ekstrapole
-edilerek (`4·e4 − 3·e0`) veri manifoldunun dışına itiliyor ve üretim
-kalitesini kaybediyor; ayrıca DR-0 gerçek görüntüleri KID uzayında diğer
-sınıflardan uzak (DR-0 sütunu çoğu satırda yüksek). Kanıt olarak DR-4
-satırı kullanılmalı; DR-0 yönü ölçüm sınırlılığı olarak raporlanır.
+**Kalan, açıklanamayan kısım (yalnızca telafili varyant):** telafili
+`poisoned_alone`'un DR-0 satırı (0,1151 / 0,0999 / 0,0649 / 0,0719 /
+0,0708) temiz DR-4 satırından (0,0539 / 0,0119 / 0,0168 / 0,0195 /
+0,0180) belirgin daha yüksek — bu fark doğal konumla açıklanamaz. Olası
+neden `4·e4 − 3·e0` ekstrapolasyonunun DR-0 tarafında üretim kalitesini
+bozması (DOĞRULANMADI, hipotez); DR-4 tarafındaki ekstrapolasyon
+(`4·e0 − 3·e4`) ise satırı neredeyse etkilemedi. Basit takasta bu
+sorun yok.
 
 ## ZK'nın doğru çerçevesi
 
@@ -324,30 +402,24 @@ Python 3.13 / güncel PyTorch ortamında StyleGAN-XL custom op'ları
 derlenemiyor.) Karar: `ref` modu KALICI; tüm sonuçlar `ops_impl='ref'`
 ile üretildi (`ops_impl` ve `ops_impl_fallback_error` alanları JSON'da).
 
-## Baseline ve güven aralığı altyapısı (hazırlandı, Colab'da HENÜZ koşulmadı)
+## Baseline ve güven aralığı altyapısı
 
-- **`no_attack` baseline** (`ATTACK_NAMES[0]`): site'ın gerçek, değiştirilmemiş
-  ağırlığı; `unprotected` = 4 dürüst siteyle normal FedAvg, `poisoned_alone`
-  = temiz site tek başına. Aynı seed (0) ve `num_images_per_class=20` ile
-  koşulunca tüm saldırı matrisleri bununla karşılaştırılabilir. Sonuç
-  gelmeden "DR-4 istenince DR-0 üretiliyor" ifadesi KESİNLEŞMİŞ sayılmaz —
-  temiz modelde de olabilir.
+- **`no_attack` baseline Colab'da KOŞULDU** (seed 0, 20 görüntü/sınıf) ve
+  yukarıdaki tüm karşılaştırmaların referansı. Baseline olmasaydı "DR-4
+  istenince DR-0 üretiliyor" ifadesi temiz modelde de doğru olabilirdi;
+  baseline bunun temiz modelde YANLIŞ olduğunu (oran 0,33–0,65 < 1)
+  gösterdi.
 - **`--num-images-per-class N`** (varsayılan quick=20, full/custom=200) ve
-  **`--seeds 0,1,2`**. Varsayılandan farklı N ve seed'ler ayrı sonuç anahtarı
-  alır (`__n50`, `__seed1`); seed=0 + varsayılan N eski anahtarı korur, bu
-  yüzden mevcut sonuçlar yeniden hesaplanmaz. FID/KID yalnızca ilk seed'de
-  hesaplanır (seed'e bağlı değil, pahalı).
+  **`--seeds 0,1,2`** hazır ama HENÜZ kullanılmadı. Varsayılandan farklı N
+  ve seed'ler ayrı sonuç anahtarı alır (`__n50`, `__seed1`); seed=0 +
+  varsayılan N eski anahtarı korur. FID/KID yalnızca ilk seed'de hesaplanır.
 - **Seed'in neyi değiştirdiği:** üretilen z'ler ve KID alt-örneklemesi.
-  Gerçek görüntü seti SABİT (sınıfın ilk N görüntüsü) — yani varyans
-  tahmini gerçek-örnek seçiminden gelen belirsizliği KAPSAMAZ.
-- Süre (0,498 s/görüntü, ref; yalnızca üretim): 20 görüntü/sınıf → 100
-  görüntü ≈ 50 s/koşul-seed; 7 saldırı × 3 koşul = 21 koşul ≈ 17,5 dk/seed
-  (yalnız baseline: 3 koşul ≈ 2,5 dk). 50 görüntü/sınıf → 250 görüntü ≈ 125 s;
-  21 koşul ≈ 44 dk/seed, 3 seed ≈ 2,2 sa. Gerçek-görüntü yükleme ve Inception
-  çıkarımı EK süredir (ölçülmedi).
-- Sonuçlar birden çok seed için henüz otomatik özetlenmiyor (ortalama/std
-  hesabı yok) — baseline görüldükten sonra kaç örnek/seed gerektiğine
-  karar verilip eklenecek.
+  Gerçek görüntü seti SABİT (sınıfın ilk N görüntüsü) — varyans tahmini
+  gerçek-örnek seçiminden gelen belirsizliği KAPSAMAZ.
+- Süre (0,498 s/görüntü, ref; yalnızca üretim): 50 görüntü/sınıf → 250
+  görüntü ≈ 125 s/koşul-seed; 21 koşul ≈ 44 dk/seed, 3 seed ≈ 2,2 sa.
+- Çok-seed özeti (ort/std) henüz yok; kaç örnek/seed gerektiğine karar
+  verilince eklenecek.
 
 ## Sınırlılıklar (makalede açıkça yer almalı)
 
@@ -369,16 +441,19 @@ ile üretildi (`ops_impl` ve `ops_impl_fallback_error` alanları JSON'da).
    girdi) ≈ 6 koşul ≈ **8–9 saat**. Bu değerler 13,13 ile
    KARŞILAŞTIRILAMAZ (`fid_comparable_to_reference=False`), yalnızca bu
    koşumun iç karşılaştırması içindir.
-3. **Saldırısız temel matris yok.** Temiz FedAvg için sınıf-tutarlılığı
-   matrisi ölçülmedi; `perceived_class[4]=0` ve DR-4 satırındaki DR-0
-   düşüklüğünün temiz modelde NE olduğu bilinmiyor. Kanıt, tek-başına↔
-   FedAvg karşılaştırması ve satır-içi göreli farkla destekleniyor; bir
-   `no_attack` temel çizgisi bu sınırlılığı kapatır.
-4. **İstatistiksel güven.** 20 görüntü/sınıf, tek tohum (seed=0), KID için
-   güven aralığı hesaplanmadı; matris değerleri (0,01–0,12) dar bir
-   aralıkta ve DR sınıfları zaten görsel olarak yakın. Oranlar (1,27 /
-   2,37 / 5,59 / 6,16) yön için güçlü kanıt, büyüklük için gösterge
-   niteliğindedir.
+3. ~~Saldırısız temel matris yok~~ — **KAPANDI**: `no_attack` baseline'ı
+   koşuldu (seed 0, 20 görüntü/sınıf); tüm matrisler ona göre yorumlanıyor.
+   Baseline'ın kendisi yeni bir sınırlılık gösterdi: temiz modelde bile
+   `perceived_class=[0,1,1,3,1]` — `perceived_class[g] != g` bayrağı tek
+   başına kanıt değil, kanıt baseline'a göre DEĞİŞİMDİR; ölçüt DR-4'ü KID
+   uzayında ayırt edemiyor.
+4. **İstatistiksel güven (kalan asıl sınırlılık).** 20 görüntü/sınıf, tek
+   tohum (seed=0), KID için güven aralığı hesaplanmadı; gerçek görüntü seti
+   sabit; matris değerleri (0,01–0,12) dar bir aralıkta ve DR sınıfları
+   zaten görsel olarak yakın. Baseline'a göre değişimler büyük (5,6× / 1,8×;
+   basit takasta satırlar beş hane aynı) — yön için güçlü kanıt; büyüklük
+   için gösterge niteliğinde. `--num-images-per-class`/`--seeds` altyapısı
+   hazır, henüz koşulmadı.
 5. **Tek round, tek zehirli site** (round 10, site 0); telafi formülü diğer
    dürüst sitelerin aynı embed satırlarına sahip olduğunu varsayar (hepsi
    aynı önceki global'den başlar).
